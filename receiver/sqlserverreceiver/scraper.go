@@ -6,15 +6,19 @@ package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-col
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/scraper"
 	"go.uber.org/zap"
 
@@ -28,37 +32,56 @@ const (
 )
 
 type sqlServerScraperHelper struct {
-	id                 component.ID
-	config             *Config
-	sqlQuery           string
-	clientProviderFunc sqlquery.ClientProviderFunc
-	dbProviderFunc     sqlquery.DbProviderFunc
-	logger             *zap.Logger
-	telemetry          sqlquery.TelemetryConfig
-	client             sqlquery.DbClient
-	db                 *sql.DB
-	mb                 *metadata.MetricsBuilder
+	id                  component.ID
+	sqlQuery            string
+	maxQuerySampleCount uint
+	granularity         uint
+	topQueryCount       uint
+	instanceName        string
+	scrapeCfg           *Config
+	clientProviderFunc  sqlquery.ClientProviderFunc
+	dbProviderFunc      sqlquery.DbProviderFunc
+	logger              *zap.Logger
+	telemetry           sqlquery.TelemetryConfig
+	client              sqlquery.DbClient
+	db                  *sql.DB
+	mb                  *metadata.MetricsBuilder
+	cache               *lru.Cache[string, float64]
+	sharedContext       *ScraperContext
 }
 
 var _ scraper.Metrics = (*sqlServerScraperHelper)(nil)
 
 func newSQLServerScraper(id component.ID,
 	query string,
+	maxQuerySampleCount uint,
+	granularity uint,
+	topQueryCount uint,
+	instanceName string,
+	scrapeCfg *Config,
+	logger *zap.Logger,
 	telemetry sqlquery.TelemetryConfig,
 	dbProviderFunc sqlquery.DbProviderFunc,
 	clientProviderFunc sqlquery.ClientProviderFunc,
-	params receiver.Settings,
-	cfg *Config,
+	mb *metadata.MetricsBuilder,
+	cache *lru.Cache[string, float64],
+	sharedContext *ScraperContext,
 ) *sqlServerScraperHelper {
 	return &sqlServerScraperHelper{
-		id:                 id,
-		config:             cfg,
-		sqlQuery:           query,
-		logger:             params.Logger,
-		telemetry:          telemetry,
-		dbProviderFunc:     dbProviderFunc,
-		clientProviderFunc: clientProviderFunc,
-		mb:                 metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params),
+		id:                  id,
+		sqlQuery:            query,
+		maxQuerySampleCount: maxQuerySampleCount,
+		granularity:         granularity,
+		topQueryCount:       topQueryCount,
+		instanceName:        instanceName,
+		scrapeCfg:           scrapeCfg,
+		logger:              logger,
+		telemetry:           telemetry,
+		dbProviderFunc:      dbProviderFunc,
+		clientProviderFunc:  clientProviderFunc,
+		mb:                  mb,
+		cache:               cache,
+		sharedContext:       sharedContext,
 	}
 }
 
@@ -81,14 +104,16 @@ func (s *sqlServerScraperHelper) ScrapeMetrics(ctx context.Context) (pmetric.Met
 	var err error
 
 	switch s.sqlQuery {
-	case getSQLServerDatabaseIOQuery(s.config.InstanceName):
+	case getSQLServerQueryMetricsQuery(s.instanceName, s.maxQuerySampleCount, s.granularity):
+		err = s.recordDatabaseQueryMetrics(ctx, s.topQueryCount)
+	case getSQLServerDatabaseIOQuery(s.instanceName):
 		err = s.recordDatabaseIOMetrics(ctx)
-	case getSQLServerPerformanceCounterQuery(s.config.InstanceName):
+	case getSQLServerPerformanceCounterQuery(s.instanceName):
 		err = s.recordDatabasePerfCounterMetrics(ctx)
-	case getSQLServerPropertiesQuery(s.config.InstanceName):
+	case getSQLServerPropertiesQuery(s.instanceName):
 		err = s.recordDatabaseStatusMetrics(ctx)
 	default:
-		return pmetric.Metrics{}, fmt.Errorf("Attempted to get metrics from unsupported query: %s", s.sqlQuery)
+		return pmetric.Metrics{}, fmt.Errorf("attempted to get metrics from unsupported query %s", s.sqlQuery)
 	}
 
 	if err != nil {
@@ -119,10 +144,11 @@ func (s *sqlServerScraperHelper) recordDatabaseIOMetrics(ctx context.Context) er
 
 	rows, err := s.client.QueryRows(ctx)
 	if err != nil {
-		if !errors.Is(err, sqlquery.ErrNullValueWarning) {
+		if errors.Is(err, sqlquery.ErrNullValueWarning) {
+			s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
+		} else {
 			return fmt.Errorf("sqlServerScraperHelper: %w", err)
 		}
-		s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
 	}
 
 	var errs []error
@@ -133,8 +159,8 @@ func (s *sqlServerScraperHelper) recordDatabaseIOMetrics(ctx context.Context) er
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverDatabaseName(row[databaseNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.config.Server)
-		rb.SetServerPort(int64(s.config.Port))
+		rb.SetServerAddress(s.scrapeCfg.Server)
+		rb.SetServerPort(int64(s.scrapeCfg.Port))
 
 		val, err = strconv.ParseFloat(row[readLatencyMsKey], 64)
 		if err != nil {
@@ -183,10 +209,11 @@ func (s *sqlServerScraperHelper) recordDatabasePerfCounterMetrics(ctx context.Co
 
 	rows, err := s.client.QueryRows(ctx)
 	if err != nil {
-		if !errors.Is(err, sqlquery.ErrNullValueWarning) {
+		if errors.Is(err, sqlquery.ErrNullValueWarning) {
+			s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
+		} else {
 			return fmt.Errorf("sqlServerScraperHelper: %w", err)
 		}
-		s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
 	}
 
 	var errs []error
@@ -195,8 +222,8 @@ func (s *sqlServerScraperHelper) recordDatabasePerfCounterMetrics(ctx context.Co
 		rb := s.mb.NewResourceBuilder()
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.config.Server)
-		rb.SetServerPort(int64(s.config.Port))
+		rb.SetServerAddress(s.scrapeCfg.Server)
+		rb.SetServerPort(int64(s.scrapeCfg.Port))
 
 		switch row[counterKey] {
 		case batchRequestRate:
@@ -272,10 +299,11 @@ func (s *sqlServerScraperHelper) recordDatabaseStatusMetrics(ctx context.Context
 
 	rows, err := s.client.QueryRows(ctx)
 	if err != nil {
-		if !errors.Is(err, sqlquery.ErrNullValueWarning) {
+		if errors.Is(err, sqlquery.ErrNullValueWarning) {
+			s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
+		} else {
 			return fmt.Errorf("sqlServerScraperHelper failed getting metric rows: %w", err)
 		}
-		s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
 	}
 
 	var errs []error
@@ -284,8 +312,8 @@ func (s *sqlServerScraperHelper) recordDatabaseStatusMetrics(ctx context.Context
 		rb := s.mb.NewResourceBuilder()
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.config.Server)
-		rb.SetServerPort(int64(s.config.Port))
+		rb.SetServerAddress(s.scrapeCfg.Server)
+		rb.SetServerPort(int64(s.scrapeCfg.Port))
 
 		errs = append(errs, s.mb.RecordSqlserverDatabaseCountDataPoint(now, row[dbOnline], metadata.AttributeDatabaseStatusOnline))
 		errs = append(errs, s.mb.RecordSqlserverDatabaseCountDataPoint(now, row[dbRestoring], metadata.AttributeDatabaseStatusRestoring))
@@ -298,4 +326,297 @@ func (s *sqlServerScraperHelper) recordDatabaseStatusMetrics(ctx context.Context
 	}
 
 	return errors.Join(errs...)
+}
+
+func (s *sqlServerScraperHelper) recordDatabaseQueryMetrics(ctx context.Context, topQueryCount uint) error {
+	// Constants are the column names of the database status
+	const totalElapsedTime = "total_elapsed_time"
+	const rowsReturned = "total_rows"
+	const totalWorkerTime = "total_worker_time"
+	const queryHash = "query_hash"
+	const queryPlanHash = "query_plan_hash"
+	const logicalReads = "total_logical_reads"
+	const logicalWrites = "total_logical_writes"
+	const physicalReads = "total_physical_reads"
+	const executionCount = "execution_count"
+	const totalGrant = "total_grant_kb"
+	rows, err := s.client.QueryRows(ctx)
+	if err != nil {
+		if errors.Is(err, sqlquery.ErrNullValueWarning) {
+			s.logger.Warn("problems encountered getting metric rows", zap.Error(err))
+		} else {
+			return fmt.Errorf("sqlServerScraperHelper failed getting metric rows: %w", err)
+		}
+	}
+	var errs []error
+
+	totalElapsedTimeDiffs := make([]int64, len(rows))
+
+	hashQueueAny := s.sharedContext.Get(query_and_plan_hash_collector_key)
+	hashQueue, ok := (*hashQueueAny).(map[string]struct{})
+	if !ok {
+		return fmt.Errorf("failed to get hash queue from context")
+	}
+
+	for i, row := range rows {
+		queryHashVal := hex.EncodeToString([]byte(row[queryHash]))
+		queryPlanHashVal := hex.EncodeToString([]byte(row[queryPlanHash]))
+
+		elapsedTime, err := strconv.ParseFloat(row[totalElapsedTime], 64)
+		if err != nil {
+			s.logger.Info(fmt.Sprintf("sqlServerScraperHelper failed getting metric rows: %s", err))
+		} else {
+			if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, totalElapsedTime, elapsedTime); cached && diff > 0 {
+				totalElapsedTimeDiffs[i] = int64(diff)
+			}
+		}
+	}
+
+	rows = sortRows(rows, totalElapsedTimeDiffs)
+
+	sort.Slice(totalElapsedTimeDiffs, func(i, j int) bool {
+		return totalElapsedTimeDiffs[i] > totalElapsedTimeDiffs[j]
+	})
+
+	for i, row := range rows {
+		if i >= int(topQueryCount) {
+			break
+		}
+
+		// skipping as not cached
+		if totalElapsedTimeDiffs[i] == 0 {
+			continue
+		}
+
+		queryHashVal := hex.EncodeToString([]byte(row[queryHash]))
+		queryPlanHashVal := hex.EncodeToString([]byte(row[queryPlanHash]))
+		// TODO: need to streamline this so the added values are guaranteed to be consistently formatted
+		hashQueue[queryHashVal+"-"+queryPlanHashVal] = struct{}{}
+
+		rb := s.mb.NewResourceBuilder()
+		rb.SetSqlserverComputerName(row[computerNameKey])
+		rb.SetSqlserverInstanceName(row[instanceNameKey])
+		rb.SetSqlserverQueryHash(queryHashVal)
+		rb.SetSqlserverQueryPlanHash(queryPlanHashVal)
+		s.logger.Debug(fmt.Sprintf("DataRow: %v, PlanHash: %v, Hash: %v", row, queryPlanHashVal, queryHashVal))
+
+		timeStamp := pcommon.NewTimestampFromTime(time.Now())
+
+		s.mb.RecordSqlserverQueryTotalElapsedTimeDataPoint(timeStamp, float64(totalElapsedTimeDiffs[i]))
+
+		rowsReturnVal, err := strconv.ParseInt(row[rowsReturned], 10, 64)
+		if err != nil {
+			err = fmt.Errorf("row %d: %w", i, err)
+			errs = append(errs, err)
+		}
+		if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, rowsReturned, float64(rowsReturnVal)); cached && diff > 0 {
+			s.mb.RecordSqlserverQueryTotalRowsDataPoint(timeStamp, int64(diff))
+		}
+
+		logicalReadsVal, err := strconv.ParseInt(row[logicalReads], 10, 64)
+		if err != nil {
+			err = fmt.Errorf("row %d: %w", i, err)
+			errs = append(errs, err)
+		}
+		if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, logicalReads, float64(logicalReadsVal)); cached && diff > 0 {
+			s.mb.RecordSqlserverQueryTotalLogicalReadsDataPoint(timeStamp, int64(diff))
+		}
+
+		logicalWritesVal, err := strconv.ParseInt(row[logicalWrites], 10, 64)
+		if err != nil {
+			err = fmt.Errorf("row %d: %w", i, err)
+			errs = append(errs, err)
+		}
+		if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, logicalWrites, float64(logicalWritesVal)); cached && diff > 0 {
+			s.mb.RecordSqlserverQueryTotalLogicalWritesDataPoint(timeStamp, int64(diff))
+		}
+
+		physicalReadsVal, err := strconv.ParseInt(row[physicalReads], 10, 64)
+		if err != nil {
+			err = fmt.Errorf("row %d: %w", i, err)
+			errs = append(errs, err)
+		}
+		if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, physicalReads, float64(physicalReadsVal)); cached && diff > 0 {
+			s.mb.RecordSqlserverQueryTotalPhysicalReadsDataPoint(timeStamp, int64(diff))
+		}
+		totalExecutionCount, err := strconv.ParseFloat(row[executionCount], 64)
+		if err != nil {
+			s.logger.Info(fmt.Sprintf("sqlServerScraperHelper failed getting metric rows: %s", err))
+		} else {
+			// TODO: we need a better way to handle execution count
+			if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, executionCount, totalExecutionCount); cached && diff > 0 {
+				s.mb.RecordSqlserverQueryExecutionCountDataPoint(timeStamp, diff)
+			}
+		}
+		workerTime, err := strconv.ParseFloat(row[totalWorkerTime], 64)
+		if err != nil {
+			s.logger.Info(fmt.Sprintf("sqlServerScraperHelper failed parsing metric total_worker_time: %s", err))
+		} else {
+			if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, totalWorkerTime, workerTime); cached && diff > 0 {
+				s.mb.RecordSqlserverQueryTotalWorkerTimeDataPoint(timeStamp, diff)
+			}
+		}
+		memoryGranted, err := strconv.ParseFloat(row[totalGrant], 64)
+		if err != nil {
+			s.logger.Info(fmt.Sprintf("sqlServerScraperHelper failed parsing metric total_grant_kb: %s", err))
+		} else {
+			if cached, diff := s.cacheAndDiff(queryHashVal, queryPlanHashVal, totalGrant, memoryGranted); cached && diff > 0 {
+				s.mb.RecordSqlserverQueryTotalGrantKbDataPoint(timeStamp, diff)
+			}
+		}
+		s.mb.EmitForResource(metadata.WithResource(rb.Emit()))
+	}
+
+	return errors.Join(errs...)
+}
+
+func (s *sqlServerScraperHelper) recordDatabaseSampleQuery(ctx context.Context) (plog.Logs, error) {
+	const hostname = "host_name"
+	const username = "user_name"
+	const loginName = "login_name"
+	const originalLoginName = "original_login_name"
+	const DBName = "db_name"
+	const queryHash = "query_hash"
+	const queryPlanHash = "query_plan_hash"
+	const waitType = "wait_type"
+	const objectName = "object_name"
+	rows, err := s.client.QueryRows(ctx)
+	if err != nil {
+		if errors.Is(err, sqlquery.ErrNullValueWarning) {
+			s.logger.Warn("problems encountered getting log rows", zap.Error(err))
+		} else {
+			return plog.Logs{}, fmt.Errorf("sqlServerScraperHelper failed getting log rows: %w", err)
+		}
+	}
+
+	var errs []error
+	logs := plog.NewLogs()
+
+	for _, row := range rows {
+		queryHashVal := hex.EncodeToString([]byte(row[queryHash]))
+		queryPlanHashVal := hex.EncodeToString([]byte(row[queryPlanHash]))
+
+		cacheKey := queryHashVal + "-" + queryPlanHashVal
+
+		if _, ok := s.cache.Get(cacheKey); !ok {
+			// TODO: report this value
+			record := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+			record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+			record.Attributes().PutStr(queryHash, queryHashVal)
+			record.Attributes().PutStr(queryPlanHash, queryPlanHashVal)
+			record.Attributes().PutStr(hostname, row[hostname])
+			record.Attributes().PutStr(username, row[username])
+			record.Attributes().PutStr(loginName, row[loginName])
+			record.Attributes().PutStr(originalLoginName, row[originalLoginName])
+			record.Attributes().PutStr(DBName, row[DBName])
+
+			waitCode, waitCategory := getWaitCategory(row[waitType])
+			record.Attributes().PutInt("wait_code", int64(waitCode))
+			record.Attributes().PutStr("wait_category", waitCategory)
+			record.Attributes().PutStr(objectName, row[objectName])
+			record.Body().SetStr("sample")
+		} else {
+			s.cache.Add(cacheKey, 1)
+		}
+	}
+
+	return logs, errors.Join(errs...)
+}
+
+func (s *sqlServerScraperHelper) cacheAndDiff(queryHash string, queryPlanHash string, column string, val float64) (bool, float64) {
+	if s.cache == nil {
+		s.logger.Error("LRU cache is not successfully initialized, skipping caching and diffing")
+		return false, 0
+	}
+
+	if val <= 0 {
+		return false, 0
+	}
+
+	key := queryHash + "-" + queryPlanHash + "-" + column
+
+	cached, ok := s.cache.Get(key)
+	if !ok {
+		s.cache.Add(key, val)
+		return false, val
+	}
+
+	if val > cached {
+		s.cache.Add(key, val)
+		return true, val - cached
+	}
+
+	return true, 0
+}
+
+func sortRows(rows []sqlquery.StringMap, values []int64) []sqlquery.StringMap {
+	// Create an index slice to track the original indices of rows
+	indices := make([]int, len(values))
+	for i := range indices {
+		indices[i] = i
+	}
+
+	// Sort the indices based on the values slice
+	sort.Slice(indices, func(i, j int) bool {
+		return values[indices[i]] > values[indices[j]]
+	})
+
+	// Create a new sorted slice for rows based on the sorted indices
+	sorted := make([]sqlquery.StringMap, len(rows))
+	for i, idx := range indices {
+		sorted[i] = rows[idx]
+	}
+
+	return sorted
+}
+
+func anyOf(s string, f func(a string, b string) bool, vals ...string) bool {
+	if len(vals) == 0 {
+		return false
+	}
+
+	for _, v := range vals {
+		if f(s, v) {
+			return true
+		}
+	}
+	return false
+}
+
+func getWaitCategory(s string) (uint, string) {
+	if code, exists := detailedWaitTypes[s]; exists {
+		return code, waitTypes[code]
+	}
+
+	switch {
+	case strings.HasPrefix(s, "LOCK_M_"):
+		return 3, "Lock"
+	case strings.HasPrefix(s, "LATCH_"):
+		return 4, "Latch"
+	case strings.HasPrefix(s, "PAGELATCH_"):
+		return 5, "Buffer Latch"
+	case strings.HasPrefix(s, "PAGEIOLATCH_"):
+		return 6, "Buffer IO"
+	case anyOf(s, strings.HasPrefix, "CLR", "SQLCLR"):
+		return 8, "SQL CLR"
+	case strings.HasPrefix(s, "DBMIRROR"):
+		return 9, "Mirroring"
+	case anyOf(s, strings.HasPrefix, "XACT", "DTC", "TRAN_MARKLATCH_", "MSQL_XACT_"):
+		return 10, "Transaction"
+	case strings.HasPrefix(s, "SLEEP_"):
+		return 11, "Idle"
+	case strings.HasPrefix(s, "PREEMPTIVE_"):
+		return 12, "Preemptive"
+	case strings.HasPrefix(s, "BROKER_") && s != "BROKER_RECEIVE_WAITFOR":
+		return 13, "Service Broker"
+	case anyOf(s, strings.HasPrefix, "HT", "BMP", "BP"):
+		return 16, "Parallelism"
+	case anyOf(s, strings.HasPrefix, "SE_REPL_", "REPL_", "PWAIT_HADR_"),
+		strings.HasPrefix(s, "HADR_") && s != "HADR_THROTTLE_LOG_RATE_GOVERNOR":
+		return 22, "Replication"
+	case strings.HasPrefix(s, "RBIO_RG_"):
+		return 23, "Log Rate Governor"
+	default:
+		return 0, "Unknown"
+	}
 }

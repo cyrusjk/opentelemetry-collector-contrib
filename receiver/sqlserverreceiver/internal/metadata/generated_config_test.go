@@ -41,6 +41,14 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					SqlserverPageOperationRate:                  MetricConfig{Enabled: true},
 					SqlserverPageSplitRate:                      MetricConfig{Enabled: true},
 					SqlserverProcessesBlocked:                   MetricConfig{Enabled: true},
+					SqlserverQueryExecutionCount:                MetricConfig{Enabled: true},
+					SqlserverQueryTotalElapsedTime:              MetricConfig{Enabled: true},
+					SqlserverQueryTotalGrantKb:                  MetricConfig{Enabled: true},
+					SqlserverQueryTotalLogicalReads:             MetricConfig{Enabled: true},
+					SqlserverQueryTotalLogicalWrites:            MetricConfig{Enabled: true},
+					SqlserverQueryTotalPhysicalReads:            MetricConfig{Enabled: true},
+					SqlserverQueryTotalRows:                     MetricConfig{Enabled: true},
+					SqlserverQueryTotalWorkerTime:               MetricConfig{Enabled: true},
 					SqlserverResourcePoolDiskThrottledReadRate:  MetricConfig{Enabled: true},
 					SqlserverResourcePoolDiskThrottledWriteRate: MetricConfig{Enabled: true},
 					SqlserverTransactionRate:                    MetricConfig{Enabled: true},
@@ -54,11 +62,13 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					SqlserverUserConnectionCount:                MetricConfig{Enabled: true},
 				},
 				ResourceAttributes: ResourceAttributesConfig{
-					ServerAddress:         ResourceAttributeConfig{Enabled: true},
-					ServerPort:            ResourceAttributeConfig{Enabled: true},
-					SqlserverComputerName: ResourceAttributeConfig{Enabled: true},
-					SqlserverDatabaseName: ResourceAttributeConfig{Enabled: true},
-					SqlserverInstanceName: ResourceAttributeConfig{Enabled: true},
+					ServerAddress:          ResourceAttributeConfig{Enabled: true},
+					ServerPort:             ResourceAttributeConfig{Enabled: true},
+					SqlserverComputerName:  ResourceAttributeConfig{Enabled: true},
+					SqlserverDatabaseName:  ResourceAttributeConfig{Enabled: true},
+					SqlserverInstanceName:  ResourceAttributeConfig{Enabled: true},
+					SqlserverQueryHash:     ResourceAttributeConfig{Enabled: true},
+					SqlserverQueryPlanHash: ResourceAttributeConfig{Enabled: true},
 				},
 			},
 		},
@@ -82,6 +92,14 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					SqlserverPageOperationRate:                  MetricConfig{Enabled: false},
 					SqlserverPageSplitRate:                      MetricConfig{Enabled: false},
 					SqlserverProcessesBlocked:                   MetricConfig{Enabled: false},
+					SqlserverQueryExecutionCount:                MetricConfig{Enabled: false},
+					SqlserverQueryTotalElapsedTime:              MetricConfig{Enabled: false},
+					SqlserverQueryTotalGrantKb:                  MetricConfig{Enabled: false},
+					SqlserverQueryTotalLogicalReads:             MetricConfig{Enabled: false},
+					SqlserverQueryTotalLogicalWrites:            MetricConfig{Enabled: false},
+					SqlserverQueryTotalPhysicalReads:            MetricConfig{Enabled: false},
+					SqlserverQueryTotalRows:                     MetricConfig{Enabled: false},
+					SqlserverQueryTotalWorkerTime:               MetricConfig{Enabled: false},
 					SqlserverResourcePoolDiskThrottledReadRate:  MetricConfig{Enabled: false},
 					SqlserverResourcePoolDiskThrottledWriteRate: MetricConfig{Enabled: false},
 					SqlserverTransactionRate:                    MetricConfig{Enabled: false},
@@ -95,11 +113,13 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					SqlserverUserConnectionCount:                MetricConfig{Enabled: false},
 				},
 				ResourceAttributes: ResourceAttributesConfig{
-					ServerAddress:         ResourceAttributeConfig{Enabled: false},
-					ServerPort:            ResourceAttributeConfig{Enabled: false},
-					SqlserverComputerName: ResourceAttributeConfig{Enabled: false},
-					SqlserverDatabaseName: ResourceAttributeConfig{Enabled: false},
-					SqlserverInstanceName: ResourceAttributeConfig{Enabled: false},
+					ServerAddress:          ResourceAttributeConfig{Enabled: false},
+					ServerPort:             ResourceAttributeConfig{Enabled: false},
+					SqlserverComputerName:  ResourceAttributeConfig{Enabled: false},
+					SqlserverDatabaseName:  ResourceAttributeConfig{Enabled: false},
+					SqlserverInstanceName:  ResourceAttributeConfig{Enabled: false},
+					SqlserverQueryHash:     ResourceAttributeConfig{Enabled: false},
+					SqlserverQueryPlanHash: ResourceAttributeConfig{Enabled: false},
 				},
 			},
 		},
@@ -107,8 +127,9 @@ func TestMetricsBuilderConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := loadMetricsBuilderConfig(t, tt.name)
-			diff := cmp.Diff(tt.want, cfg, cmpopts.IgnoreUnexported(MetricConfig{}, ResourceAttributeConfig{}))
-			require.Emptyf(t, diff, "Config mismatch (-expected +actual):\n%s", diff)
+			if diff := cmp.Diff(tt.want, cfg, cmpopts.IgnoreUnexported(MetricConfig{}, ResourceAttributeConfig{})); diff != "" {
+				t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
+			}
 		})
 	}
 }
@@ -135,29 +156,34 @@ func TestResourceAttributesConfig(t *testing.T) {
 		{
 			name: "all_set",
 			want: ResourceAttributesConfig{
-				ServerAddress:         ResourceAttributeConfig{Enabled: true},
-				ServerPort:            ResourceAttributeConfig{Enabled: true},
-				SqlserverComputerName: ResourceAttributeConfig{Enabled: true},
-				SqlserverDatabaseName: ResourceAttributeConfig{Enabled: true},
-				SqlserverInstanceName: ResourceAttributeConfig{Enabled: true},
+				ServerAddress:          ResourceAttributeConfig{Enabled: true},
+				ServerPort:             ResourceAttributeConfig{Enabled: true},
+				SqlserverComputerName:  ResourceAttributeConfig{Enabled: true},
+				SqlserverDatabaseName:  ResourceAttributeConfig{Enabled: true},
+				SqlserverInstanceName:  ResourceAttributeConfig{Enabled: true},
+				SqlserverQueryHash:     ResourceAttributeConfig{Enabled: true},
+				SqlserverQueryPlanHash: ResourceAttributeConfig{Enabled: true},
 			},
 		},
 		{
 			name: "none_set",
 			want: ResourceAttributesConfig{
-				ServerAddress:         ResourceAttributeConfig{Enabled: false},
-				ServerPort:            ResourceAttributeConfig{Enabled: false},
-				SqlserverComputerName: ResourceAttributeConfig{Enabled: false},
-				SqlserverDatabaseName: ResourceAttributeConfig{Enabled: false},
-				SqlserverInstanceName: ResourceAttributeConfig{Enabled: false},
+				ServerAddress:          ResourceAttributeConfig{Enabled: false},
+				ServerPort:             ResourceAttributeConfig{Enabled: false},
+				SqlserverComputerName:  ResourceAttributeConfig{Enabled: false},
+				SqlserverDatabaseName:  ResourceAttributeConfig{Enabled: false},
+				SqlserverInstanceName:  ResourceAttributeConfig{Enabled: false},
+				SqlserverQueryHash:     ResourceAttributeConfig{Enabled: false},
+				SqlserverQueryPlanHash: ResourceAttributeConfig{Enabled: false},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := loadResourceAttributesConfig(t, tt.name)
-			diff := cmp.Diff(tt.want, cfg, cmpopts.IgnoreUnexported(ResourceAttributeConfig{}))
-			require.Emptyf(t, diff, "Config mismatch (-expected +actual):\n%s", diff)
+			if diff := cmp.Diff(tt.want, cfg, cmpopts.IgnoreUnexported(ResourceAttributeConfig{})); diff != "" {
+				t.Errorf("Config mismatch (-expected +actual):\n%s", diff)
+			}
 		})
 	}
 }
