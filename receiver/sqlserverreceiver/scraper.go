@@ -127,6 +127,8 @@ func (s *sqlServerScraperHelper) Shutdown(_ context.Context) error {
 	if s.db != nil {
 		return s.db.Close()
 	}
+	// close down Subject and it's channels
+	sharedSubject.Close()
 	return nil
 }
 
