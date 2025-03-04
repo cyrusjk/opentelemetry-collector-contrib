@@ -22,6 +22,8 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver/internal/metadata"
 )
 
+var keySet = make(map[string]any)
+
 type sqlServerLogsScraperHelper struct {
 	id                 component.ID
 	sqlQuery           string
@@ -34,7 +36,7 @@ type sqlServerLogsScraperHelper struct {
 	client             sqlquery.DbClient
 	db                 *sql.DB
 	metricsBuilder     *metadata.MetricsBuilder
-	sharedContext      *ScraperContext
+	sharedSubject      *Subject
 	// internal fields
 	dbClient sqlquery.DbClient
 	cache    *lru.Cache[string, bool]
@@ -49,6 +51,17 @@ func (s *sqlServerLogsScraperHelper) Start(context.Context, component.Host) erro
 	}
 	s.client = s.clientProviderFunc(sqlquery.DbWrapper{Db: s.db}, s.sqlQuery, s.logger, s.telemetryConfig)
 
+	input := sharedSubject.Subscribe()
+	go func() {
+		for {
+			val := <-input
+			switch val := val.(type) {
+			case string:
+				keySet[val] = struct{}{}
+			}
+		}
+	}()
+
 	return nil
 }
 
@@ -62,20 +75,14 @@ func (s *sqlServerLogsScraperHelper) Shutdown(_ context.Context) error {
 
 // ScrapeLogs  queries the database and returns the logs
 func (s *sqlServerLogsScraperHelper) ScrapeLogs(ctx context.Context) (plog.Logs, error) {
-	hashQueueAny := s.sharedContext.Get(query_and_plan_hash_collector_key)
-	hashQueue, ok := (*hashQueueAny).(map[string]struct{})
-	if !ok {
-		return plog.NewLogs(), fmt.Errorf("failed to get hash queue from context")
-	}
-
 	newCount := 0
 	logs := plog.NewLogs()
-	for k := range hashQueue {
+	for k := range keySet {
 		// check to see if we have already queried for this hash
 		hit := s.cache.Contains(k)
 		if hit {
 			// remove the key from the queue
-			delete(hashQueue, k)
+			delete(keySet, k)
 			// we have already queried for this hash, so skip it
 			continue
 		}
@@ -104,18 +111,23 @@ func (s *sqlServerLogsScraperHelper) ScrapeLogs(ctx context.Context) (plog.Logs,
 		record := resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
 		record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
 		record.Attributes().PutStr("query_hash", queryHash)
-		record.Attributes().PutStr("query_text", rows[0]["text"])
+
+		record.Body().SetStr(rows[0]["text"])
+		//record.Attributes().PutStr("query_text", rows[0]["text"])
+		record = resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+		record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
 		record.Attributes().PutStr("query_plan_hash", planHash)
-		record.Attributes().PutStr("query_plan", rows[0]["query_plan"])
+		//record.Attributes().PutStr("query_plan", rows[0]["query_plan"])
+		record.Body().SetStr(rows[0]["query_plan"])
 		// Now that we have processed the row, we can add it to the cache to make sure we skip it next time and emit the log.
 		s.cache.Add(k, true)
 		s.metricsBuilder.Emit(metadata.WithResource(resource))
 		newCount++
-		delete(hashQueue, k)
+		delete(keySet, k)
 	}
 	if newCount > 0 {
 		s.logger.Info("Exported query text",
-			zap.Int("queue_size", len(hashQueue)),
+			zap.Int("queue_size", len(keySet)),
 			zap.Int("new_count", newCount),
 			zap.Int("cache_size", s.cache.Len()))
 	}
@@ -147,8 +159,6 @@ func (s *sqlServerLogsScraperHelper) init(cfg *Config) {
 	s.dbClient = sqlquery.NewDbClient(sqlquery.DbWrapper{Db: db},
 		getSQLServerQueryTextAndPlanQuery(cfg.InstanceName, cfg.MaxQuerySampleCount, cfg.Granularity),
 		s.logger, sqlquery.TelemetryConfig{})
-	// This is a Set (Map) atm, but should be a thread-safe queue of some sort
-	s.sharedContext.Add(query_and_plan_hash_collector_key, map[string]struct{}{})
 }
 
 // setupSQLServerLogsScrapers creates the scrapers for logs similar to setupSQLServerScrapers
@@ -161,7 +171,7 @@ func newSQLServerLogsScraperHelper(
 	dbProviderFunc sqlquery.DbProviderFunc,
 	clientProviderFunc sqlquery.ClientProviderFunc,
 	metricsBuilder *metadata.MetricsBuilder,
-	sharedContext *ScraperContext,
+	sharedSubject *Subject,
 ) *sqlServerLogsScraperHelper {
 	retval := &sqlServerLogsScraperHelper{
 		id:                 id,
@@ -173,7 +183,7 @@ func newSQLServerLogsScraperHelper(
 		dbProviderFunc:     dbProviderFunc,
 		clientProviderFunc: clientProviderFunc,
 		metricsBuilder:     metricsBuilder,
-		sharedContext:      sharedContext,
+		sharedSubject:      sharedSubject,
 	}
 	retval.init(cfg)
 	return retval

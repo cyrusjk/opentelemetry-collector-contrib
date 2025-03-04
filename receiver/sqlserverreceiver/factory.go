@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
+package sqlserverreceiver // Package sqlserverreceiver import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 )
 
 var errConfigNotSQLServer = errors.New("config was not a sqlserver receiver config")
+var sharedSubject = NewSubject(200)
 
 // NewFactory creates a factory for SQL Server receiver.
 func NewFactory() receiver.Factory {
@@ -123,7 +124,7 @@ func setupSQLServerScrapers(params receiver.Settings, cfg *Config) []*sqlServerS
 	}
 
 	var scrapers []*sqlServerScraperHelper
-	sharedContext := GetContext()
+
 	for i, query := range queries {
 		id := component.NewIDWithName(metadata.Type, fmt.Sprintf("query-%d: %s", i, query))
 
@@ -151,7 +152,7 @@ func setupSQLServerScrapers(params receiver.Settings, cfg *Config) []*sqlServerS
 			sqlquery.NewDbClient,
 			metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params),
 			cache,
-			sharedContext)
+			&sharedSubject)
 		scrapers = append(scrapers, sqlServerScraper)
 	}
 
@@ -178,7 +179,6 @@ func setupSQLServerLogsScrapers(params receiver.Settings, cfg *Config) []*sqlSer
 	}
 
 	var scrapers []*sqlServerLogsScraperHelper
-	sharedContext := GetContext()
 	for i, query := range queries {
 		id := component.NewIDWithName(metadata.Type, fmt.Sprintf("logs-query-%d: %s", i, query))
 
@@ -191,7 +191,7 @@ func setupSQLServerLogsScrapers(params receiver.Settings, cfg *Config) []*sqlSer
 			dbProviderFunc,
 			sqlquery.NewDbClient,
 			metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params),
-			sharedContext)
+			&sharedSubject)
 
 		scrapers = append(scrapers, logScraper)
 	}
@@ -245,7 +245,6 @@ func setupLogsScrapers(params receiver.Settings, cfg *Config) ([]scraperhelper.C
 
 		opt := scraperhelper.AddFactoryWithConfig(f, nil)
 
-		//opt := scraperhelper.AddScraper(metadata.Type, s)
 		opts = append(opts, opt)
 	}
 

@@ -47,7 +47,7 @@ type sqlServerScraperHelper struct {
 	db                  *sql.DB
 	mb                  *metadata.MetricsBuilder
 	cache               *lru.Cache[string, float64]
-	sharedContext       *ScraperContext
+	sharedSubject       *Subject
 }
 
 var _ scraper.Metrics = (*sqlServerScraperHelper)(nil)
@@ -65,7 +65,7 @@ func newSQLServerScraper(id component.ID,
 	clientProviderFunc sqlquery.ClientProviderFunc,
 	mb *metadata.MetricsBuilder,
 	cache *lru.Cache[string, float64],
-	sharedContext *ScraperContext,
+	sharedSubject *Subject,
 ) *sqlServerScraperHelper {
 	return &sqlServerScraperHelper{
 		id:                  id,
@@ -81,7 +81,7 @@ func newSQLServerScraper(id component.ID,
 		clientProviderFunc:  clientProviderFunc,
 		mb:                  mb,
 		cache:               cache,
-		sharedContext:       sharedContext,
+		sharedSubject:       sharedSubject,
 	}
 }
 
@@ -352,12 +352,6 @@ func (s *sqlServerScraperHelper) recordDatabaseQueryMetrics(ctx context.Context,
 
 	totalElapsedTimeDiffs := make([]int64, len(rows))
 
-	hashQueueAny := s.sharedContext.Get(query_and_plan_hash_collector_key)
-	hashQueue, ok := (*hashQueueAny).(map[string]struct{})
-	if !ok {
-		return fmt.Errorf("failed to get hash queue from context")
-	}
-
 	for i, row := range rows {
 		queryHashVal := hex.EncodeToString([]byte(row[queryHash]))
 		queryPlanHashVal := hex.EncodeToString([]byte(row[queryPlanHash]))
@@ -391,7 +385,7 @@ func (s *sqlServerScraperHelper) recordDatabaseQueryMetrics(ctx context.Context,
 		queryHashVal := hex.EncodeToString([]byte(row[queryHash]))
 		queryPlanHashVal := hex.EncodeToString([]byte(row[queryPlanHash]))
 		// TODO: need to streamline this so the added values are guaranteed to be consistently formatted
-		hashQueue[queryHashVal+"-"+queryPlanHashVal] = struct{}{}
+		sharedSubject.Publish(queryHashVal + "-" + queryPlanHashVal)
 
 		rb := s.mb.NewResourceBuilder()
 		rb.SetSqlserverComputerName(row[computerNameKey])
