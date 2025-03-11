@@ -21,8 +21,10 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver/internal/metadata"
 )
 
-var errConfigNotSQLServer = errors.New("config was not a sqlserver receiver config")
-var sharedSubject = NewSubject(200)
+var (
+	errConfigNotSQLServer = errors.New("config was not a sqlserver receiver config")
+	sharedSubject         = NewSubject(200)
+)
 
 // NewFactory creates a factory for SQL Server receiver.
 func NewFactory() receiver.Factory {
@@ -36,6 +38,7 @@ func NewFactory() receiver.Factory {
 func createDefaultConfig() component.Config {
 	cfg := scraperhelper.NewDefaultControllerConfig()
 	cfg.CollectionInterval = 10 * time.Second
+	cfg.InitialDelay = time.Second
 	return &Config{
 		ControllerConfig:     cfg,
 		MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),

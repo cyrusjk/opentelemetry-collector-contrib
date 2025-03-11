@@ -34,7 +34,14 @@ resource_attributes:
     type: int
     warnings:
       if_enabled_not_set: "This attribute will be enabled by default starting in release v0.121.0."
-
+  sqlserver.query.hash:
+    description: Hash of the query
+    enabled: false
+    type: string
+  sqlserver.query_plan.hash:
+    description: Hash of the query plan
+    enabled: false
+    type: string
 attributes:
   page.operations:
     name_override: type
@@ -483,7 +490,6 @@ metrics:
       aggregation_temporality: cumulative
       value_type: double
     extended_documentation: This metric is only available when the receiver is configured to directly connect to SQL Server.
-
 tests:
   config:
   goleak:

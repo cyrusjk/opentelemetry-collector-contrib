@@ -22,7 +22,10 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver/internal/metadata"
 )
 
-var keySet = make(map[string]any)
+var (
+	keySet = make(map[string]any, 200)
+	logs   = plog.NewLogs()
+)
 
 type sqlServerLogsScraperHelper struct {
 	id                 component.ID
@@ -38,8 +41,10 @@ type sqlServerLogsScraperHelper struct {
 	metricsBuilder     *metadata.MetricsBuilder
 	sharedSubject      *Subject
 	// internal fields
-	dbClient sqlquery.DbClient
-	cache    *lru.Cache[string, bool]
+	dbClient     sqlquery.DbClient
+	cache        *lru.Cache[string, bool]
+	computerName string
+	sqlInstance  string
 }
 
 // Start establish DB connection at startup
@@ -54,10 +59,9 @@ func (s *sqlServerLogsScraperHelper) Start(context.Context, component.Host) erro
 	input := sharedSubject.Subscribe()
 	go func() {
 		for {
-			val := <-input
-			switch val := val.(type) {
-			case string:
-				keySet[val] = struct{}{}
+			s.scrapeAsync(input)
+			if sharedSubject.closed {
+				break
 			}
 		}
 	}()
@@ -67,71 +71,155 @@ func (s *sqlServerLogsScraperHelper) Start(context.Context, component.Host) erro
 
 // Shutdown Close the DB connection
 func (s *sqlServerLogsScraperHelper) Shutdown(_ context.Context) error {
+	s.sharedSubject.Close()
 	if s.db != nil {
 		return s.db.Close()
 	}
 	return nil
 }
 
-// ScrapeLogs  queries the database and returns the logs
-func (s *sqlServerLogsScraperHelper) ScrapeLogs(ctx context.Context) (plog.Logs, error) {
-	newCount := 0
-	logs := plog.NewLogs()
-	for k := range keySet {
-		// check to see if we have already queried for this hash
-		hit := s.cache.Contains(k)
-		if hit {
-			// remove the key from the queue
-			delete(keySet, k)
-			// we have already queried for this hash, so skip it
-			continue
-		}
-		// split the key into query and plan hashes; the creation of this key should be a shared function to ensure consistency
-		keys := strings.Split(k, "-")
-		queryHash := keys[0]
-		planHash := keys[1]
-		// dbClient only exposes QueryRows, though q query for a single row is more appropriate here.
-		rows, err := s.dbClient.QueryRows(ctx, queryHash, planHash)
-		if err != nil {
-			s.logger.Error("Failed to query for query text", zap.Error(err))
-			continue
-		}
-		// We only expect one row, so we check for empty or grab 0.
-		if len(rows) == 0 {
-			s.logger.Warn("No query text found for key", zap.String("key", k))
-			continue
-		}
-		// We are going to create the ResourceLogs and related OTel objects manually since the MetricsBuilder is
-		// focused just on the metrics objects. Hopefully there will be a more generic way to do this in the future.
-		resourceLogs := logs.ResourceLogs().AppendEmpty()
-		resource := resourceLogs.Resource()
-		resource.Attributes().PutStr("computer_name", rows[0]["computer_name"])
-		resource.Attributes().PutStr("sql_instance", rows[0]["sql_instance"])
-		// There is a spot for the hashes at the resource level, but it is not clear if that is the correct place.
-		record := resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
-		record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
-		record.Attributes().PutStr("query_hash", queryHash)
+func (s *sqlServerLogsScraperHelper) scrapeAsync(input <-chan any) {
+	val := <-input
 
-		record.Body().SetStr(rows[0]["text"])
-		//record.Attributes().PutStr("query_text", rows[0]["text"])
-		record = resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
-		record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
-		record.Attributes().PutStr("query_plan_hash", planHash)
-		//record.Attributes().PutStr("query_plan", rows[0]["query_plan"])
-		record.Body().SetStr(rows[0]["query_plan"])
-		// Now that we have processed the row, we can add it to the cache to make sure we skip it next time and emit the log.
-		s.cache.Add(k, true)
-		s.metricsBuilder.Emit(metadata.WithResource(resource))
-		newCount++
-		delete(keySet, k)
+	switch val := val.(type) {
+	case string:
+		_ = s.scrapeFor(val)
+	default:
+		fmt.Printf("Unknown type %T", val)
 	}
-	if newCount > 0 {
-		s.logger.Info("Exported query text",
-			zap.Int("queue_size", len(keySet)),
-			zap.Int("new_count", newCount),
-			zap.Int("cache_size", s.cache.Len()))
+}
+
+func (s *sqlServerLogsScraperHelper) initLogs() plog.Logs {
+	retval := plog.NewLogs()
+	resourceLogs := retval.ResourceLogs().AppendEmpty()
+	resource := resourceLogs.Resource()
+	resource.Attributes().PutStr("computer_name", s.computerName)
+	resource.Attributes().PutStr("sql_instance", s.sqlInstance)
+
+	return retval
+}
+
+func (s *sqlServerLogsScraperHelper) scrapeFor(key string) error {
+	// check to see if we have already queried for this hash
+	hit := s.cache.Contains(key)
+	if hit {
+		// we have already queried for this hash, so skip it
+		return nil
 	}
-	return logs, nil
+	// split the key into query and plan hashes; the creation of this key should be a shared function to ensure consistency
+	keys := strings.Split(key, "-")
+	queryHash := keys[0]
+	planHash := keys[1]
+
+	// Do we need a new context every call?
+	asyncContext := context.Background()
+	endFunc := func() {}
+	if s.scrapeCfg.Timeout == 0 {
+		asyncContext, endFunc = context.WithCancel(asyncContext)
+	} else {
+		asyncContext, endFunc = context.WithTimeout(asyncContext, s.scrapeCfg.Timeout)
+	}
+
+	// dbClient only exposes QueryRows, though q query for a single row is more appropriate here.
+	rows, err := s.dbClient.QueryRows(asyncContext, queryHash, planHash)
+	endFunc()
+	if err != nil {
+		s.logger.Error("Failed to query for query text", zap.Error(err))
+		return nil
+	}
+	// We only expect one row, so we check for empty or grab 0.
+	if len(rows) == 0 {
+		s.logger.Warn("No query text found for key", zap.String("key", key))
+		return nil
+	}
+	// We are going to create the ResourceLogs and related OTel objects manually since the MetricsBuilder is
+	// focused just on the metrics objects. Hopefully there will be a more generic way to do this in the future.
+	resourceLogs := logs.ResourceLogs().At(0)
+	resource := resourceLogs.Resource()
+	// There is a spot for the hashes at the resource level, but it is not clear if that is the correct place.
+	// Create a Log record for the query with the query_hash as an attribute.
+	record := resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+	record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	record.Attributes().PutStr("query_hash", queryHash)
+	record.Body().SetStr(rows[0]["text"])
+
+	// Create another Log record for the query plan with the query_plan_hash as an attribute.
+	record = resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+	record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	record.Attributes().PutStr("query_plan_hash", planHash)
+	record.Body().SetStr(rows[0]["query_plan"])
+	// Now that we have processed the row, we can add it to the cache to make sure we skip it next time and emit the log.
+	s.cache.Add(key, true)
+	s.metricsBuilder.Emit(metadata.WithResource(resource))
+	return nil
+}
+
+// ScrapeLogs  queries the database and returns the logs
+// We need the provided Context ot interact with the db, otherwise this work could be done as keys arrive.
+// BUT the context is only cancellable and has a configured timeout, which COULD be done independently, maning that this
+// function could only serve to emit the already collected logs.
+func (s *sqlServerLogsScraperHelper) ScrapeLogs(ctx context.Context) (plog.Logs, error) {
+	/*
+		newCount := 0
+		logs := plog.NewLogs()
+		for key := range keySet {
+			// check to see if we have already queried for this hash
+			hit := s.cache.Contains(key)
+			if hit {
+				// remove the key from the queue
+				delete(keySet, key)
+				// we have already queried for this hash, so skip it
+				continue
+			}
+			// split the key into query and plan hashes; the creation of this key should be a shared function to ensure consistency
+			keys := strings.Split(key, "-")
+			queryHash := keys[0]
+			planHash := keys[1]
+			// dbClient only exposes QueryRows, though q query for a single row is more appropriate here.
+			rows, err := s.dbClient.QueryRows(ctx, queryHash, planHash)
+			if err != nil {
+				s.logger.Error("Failed to query for query text", zap.Error(err))
+				continue
+			}
+			// We only expect one row, so we check for empty or grab 0.
+			if len(rows) == 0 {
+				s.logger.Warn("No query text found for key", zap.String("key", key))
+				continue
+			}
+			// We are going to create the ResourceLogs and related OTel objects manually since the MetricsBuilder is
+			// focused just on the metrics objects. Hopefully there will be a more generic way to do this in the future.
+			resourceLogs := logs.ResourceLogs().AppendEmpty()
+			resource := resourceLogs.Resource()
+			resource.Attributes().PutStr("computer_name", rows[0]["computer_name"])
+			resource.Attributes().PutStr("sql_instance", rows[0]["sql_instance"])
+			// There is a spot for the hashes at the resource level, but it is not clear if that is the correct place.
+			// Create a Log record for the query with the query_hash as an attribute.
+			record := resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+			record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+			record.Attributes().PutStr("query_hash", queryHash)
+			record.Body().SetStr(rows[0]["text"])
+
+			// Create another Log record for the query plan with the query_plan_hash as an attribute.
+			record = resourceLogs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
+			record.SetTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+			record.Attributes().PutStr("query_plan_hash", planHash)
+			record.Body().SetStr(rows[0]["query_plan"])
+			// Now that we have processed the row, we can add it to the cache to make sure we skip it next time and emit the log.
+			s.cache.Add(key, true)
+			s.metricsBuilder.Emit(metadata.WithResource(resource))
+			newCount++
+			delete(keySet, key)
+		}
+		if newCount > 0 {
+			s.logger.Info("Exported query text",
+				zap.Int("queue_size", len(keySet)),
+				zap.Int("new_count", newCount),
+				zap.Int("cache_size", s.cache.Len()))
+		}
+	*/
+	emitMe := logs
+	logs = s.initLogs()
+	return emitMe, nil
 }
 
 // getLogQueries returns the queries for logs from queries.go
@@ -184,6 +272,8 @@ func newSQLServerLogsScraperHelper(
 		clientProviderFunc: clientProviderFunc,
 		metricsBuilder:     metricsBuilder,
 		sharedSubject:      sharedSubject,
+		computerName:       cfg.ComputerName,
+		sqlInstance:        cfg.InstanceName,
 	}
 	retval.init(cfg)
 	return retval

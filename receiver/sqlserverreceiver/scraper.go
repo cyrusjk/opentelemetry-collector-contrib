@@ -38,7 +38,7 @@ type sqlServerScraperHelper struct {
 	granularity         uint
 	topQueryCount       uint
 	instanceName        string
-	scrapeCfg           *Config
+	config              *Config
 	clientProviderFunc  sqlquery.ClientProviderFunc
 	dbProviderFunc      sqlquery.DbProviderFunc
 	logger              *zap.Logger
@@ -74,7 +74,7 @@ func newSQLServerScraper(id component.ID,
 		granularity:         granularity,
 		topQueryCount:       topQueryCount,
 		instanceName:        instanceName,
-		scrapeCfg:           scrapeCfg,
+		config:              scrapeCfg,
 		logger:              logger,
 		telemetry:           telemetry,
 		dbProviderFunc:      dbProviderFunc,
@@ -161,8 +161,8 @@ func (s *sqlServerScraperHelper) recordDatabaseIOMetrics(ctx context.Context) er
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverDatabaseName(row[databaseNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.scrapeCfg.Server)
-		rb.SetServerPort(int64(s.scrapeCfg.Port))
+		rb.SetServerAddress(s.config.Server)
+		rb.SetServerPort(int64(s.config.Port))
 
 		val, err = strconv.ParseFloat(row[readLatencyMsKey], 64)
 		if err != nil {
@@ -243,8 +243,8 @@ func (s *sqlServerScraperHelper) recordDatabasePerfCounterMetrics(ctx context.Co
 		rb := s.mb.NewResourceBuilder()
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.scrapeCfg.Server)
-		rb.SetServerPort(int64(s.scrapeCfg.Port))
+		rb.SetServerAddress(s.config.Server)
+		rb.SetServerPort(int64(s.config.Port))
 
 		switch row[counterKey] {
 		case activeTempTables:
@@ -485,8 +485,8 @@ func (s *sqlServerScraperHelper) recordDatabaseStatusMetrics(ctx context.Context
 		rb := s.mb.NewResourceBuilder()
 		rb.SetSqlserverComputerName(row[computerNameKey])
 		rb.SetSqlserverInstanceName(row[instanceNameKey])
-		rb.SetServerAddress(s.scrapeCfg.Server)
-		rb.SetServerPort(int64(s.scrapeCfg.Port))
+		rb.SetServerAddress(s.config.Server)
+		rb.SetServerPort(int64(s.config.Port))
 
 		errs = append(errs, s.mb.RecordSqlserverDatabaseCountDataPoint(now, row[dbOnline], metadata.AttributeDatabaseStatusOnline))
 		errs = append(errs, s.mb.RecordSqlserverDatabaseCountDataPoint(now, row[dbRestoring], metadata.AttributeDatabaseStatusRestoring))
