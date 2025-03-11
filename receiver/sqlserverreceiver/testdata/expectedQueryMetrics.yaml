@@ -1,0 +1,41 @@
+resourceMetrics:
+  - resource:
+      attributes:
+        - key: sqlserver.instance.name
+          value:
+            stringValue: sqlpreview
+    scopeMetrics:
+      - metrics:
+          - description: The total time taken by the query
+            name: sqlserver.query.total_elapsed_time
+            sum:
+              aggregationTemporality: 2
+              dataPoints:
+                - asDouble: 8787
+                  startTimeUnixNano: "1000000"
+                  timeUnixNano: "2000000"
+              isMonotonic: true
+            unit: s
+        scope:
+          name: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver
+          version: latest
+  - resource:
+      attributes:
+        - key: sqlserver.instance.name
+          value:
+            stringValue: sqlpreview
+    scopeMetrics:
+      - metrics:
+          - description: The total time taken by the query
+            name: sqlserver.query.total_elapsed_time
+            sum:
+              aggregationTemporality: 2
+              dataPoints:
+                - asDouble: 6192
+                  startTimeUnixNano: "1000000"
+                  timeUnixNano: "2000000"
+              isMonotonic: true
+            unit: s
+        scope:
+          name: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver
+          version: latest

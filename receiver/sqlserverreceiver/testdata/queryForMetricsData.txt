@@ -1,0 +1,62 @@
+[
+  {
+    "sql_instance": "sqlpreview",
+    "computer_name": "CKALBREN-M-W6WN",
+    "query_plan_handle": "0x06000100C50BD13070819A280F00000001000000000000000000000000000000000000000000000000000000",
+    "query_hash": "0x233F3CCC287DC12E",
+    "query_plan_hash": "0x0155F3BF897A57BD",
+    "execution_count": "4",
+    "total_elapsed_time": "1212",
+    "total_worker_time": "1209",
+    "total_logical_reads": "8",
+    "total_physical_reads": "0",
+    "total_logical_writes": "0",
+    "total_rows": "0",
+    "total_grant_kb": "0"
+  },
+  {
+    "sql_instance": "sqlpreview",
+    "computer_name": "CKALBREN-M-W6WN",
+    "query_plan_handle": "0x06000100D3C13508B08DBC1A0F00000001000000000000000000000000000000000000000000000000000000",
+    "query_hash": "0x10C79B062068276F",
+    "query_plan_hash": "0x01BBAAB2F07CF681",
+    "execution_count": "4",
+    "total_elapsed_time": "3807",
+    "total_worker_time": "3803",
+    "total_logical_reads": "64",
+    "total_physical_reads": "0",
+    "total_logical_writes": "0",
+    "total_rows": "0",
+    "total_grant_kb": "4096"
+  },
+    {
+      "sql_instance": "sqlpreview",
+      "computer_name": "CKALBREN-M-W6WN",
+      "query_plan_handle": "0x06000100C50BD13070819A280F00000001000000000000000000000000000000000000000000000000000000",
+      "query_hash": "0x233F3CCC287DC12E",
+      "query_plan_hash": "0x0155F3BF897A57BD",
+      "execution_count": "4",
+      "total_elapsed_time": "9999",
+      "total_worker_time": "1209",
+      "total_logical_reads": "8",
+      "total_physical_reads": "0",
+      "total_logical_writes": "0",
+      "total_rows": "0",
+      "total_grant_kb": "0"
+    },
+    {
+      "sql_instance": "sqlpreview",
+      "computer_name": "CKALBREN-M-W6WN",
+      "query_plan_handle": "0x06000100D3C13508B08DBC1A0F00000001000000000000000000000000000000000000000000000000000000",
+      "query_hash": "0x10C79B062068276F",
+      "query_plan_hash": "0x01BBAAB2F07CF681",
+      "execution_count": "4",
+      "total_elapsed_time": "9999",
+      "total_worker_time": "3803",
+      "total_logical_reads": "64",
+      "total_physical_reads": "0",
+      "total_logical_writes": "0",
+      "total_rows": "0",
+      "total_grant_kb": "4096"
+    }
+]
