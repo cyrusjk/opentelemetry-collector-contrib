@@ -1,0 +1,14 @@
+type: metricstoeventsconnector
+
+status:
+  class: connector
+  stability:
+    beta: [metrics_to_logs]
+  distributions: [contrib]
+  codeowners:
+    active: []
+    emeritus: []
+
+tests:
+  goleak:
+    skip: true
