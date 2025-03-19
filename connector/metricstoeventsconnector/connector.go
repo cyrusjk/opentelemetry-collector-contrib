@@ -28,15 +28,17 @@ the need for a cache and sends data as fast as possible.
 import (
 	"context"
 	"fmt"
+	"github.com/oklog/ulid/v2"
+	"go.uber.org/zap"
+	"time"
+
 	"github.com/patrickmn/go-cache"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"time"
 )
 
 var hashCache = cache.New(6*time.Hour, 12*time.Hour)
@@ -76,6 +78,7 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 		// copy the resource
 		ms.ResourceMetrics().At(a).Resource().CopyTo(recLogs.Resource())
 		recLogs.Resource().Attributes().PutStr("EventSource", "metrics")
+		recLogs.Resource().Attributes().PutStr("GUID", ulid.Make().String()) // kafka exporter uses resource attributes as key, so give it something to break that up
 		scopeLogs := recLogs.ScopeLogs().AppendEmpty()
 		scope := scopeLogs.Scope()
 		if resMets.ScopeMetrics().Len() == 1 {
@@ -106,29 +109,34 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 				metric := scopeMets.Metrics().At(c)
 				var minT = pcommon.NewTimestampFromTime(time.Now().Add(time.Hour))
 				var maxT = pcommon.NewTimestampFromTime(time.Now().Add(time.Hour * -1))
+				var attributesMap map[string]any = nil
 				var dbl float64 = 0
 				switch metric.Type() {
 				case pmetric.MetricTypeSum:
 					// Do we care if it's a counter or not?
 					dps := metric.Sum().DataPoints()
 					dbl, minT, maxT = conn.appendMetricDataPoints(&dps)
+					attributesMap = extractAttributes(&dps)
 				case pmetric.MetricTypeGauge:
 					dps := metric.Gauge().DataPoints()
 					dbl, minT, maxT = conn.appendMetricDataPoints(&dps)
+					attributesMap = extractAttributes(&dps)
 				case pmetric.MetricTypeSummary:
 					dps := metric.Summary().DataPoints()
 					for d := 0; d < dps.Len(); d++ {
 						dp := dps.At(d)
 						dbl = dbl + dp.Sum()
-						if dp.Attributes().Len() > 0 {
-							keys := maps.Keys(dp.Attributes().AsRaw())
-							if len(keys) > 0 {
-								conn.logger.Info(fmt.Sprintf("Summary Attributes lost %s", keys))
-							}
+						if minT > dp.Timestamp() {
+							minT = dp.Timestamp()
+						}
+						if maxT < dp.Timestamp() {
+							maxT = dp.Timestamp()
 						}
 					}
+					attributesMap = extractSummaryAttributes(&dps)
 				default:
 					conn.logger.Debug(fmt.Sprintf("Skipping mapping of %s;  %t metric type is not yet supported", metric.Name(), metric.Type()))
+					continue
 				}
 				if minTime >= minT {
 					minTime = minT
@@ -137,6 +145,14 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 					maxTime = maxT
 				}
 				atts.PutDouble(metric.Name(), dbl)
+				// This is one possible way to retain Metric Attributes in the Log record, and other strategies may be added as options later
+				if attributesMap != nil {
+					for k, v := range attributesMap {
+						atts.PutStr(metric.Name()+"."+k, v.(pcommon.Value).Str())
+					}
+				}
+				atts.PutStr(metric.Name()+".metric.type", metric.Type().String())
+				atts.PutStr(metric.Name()+".metric.unit", metric.Unit())
 			}
 			// Not sure what to do with/about different time stamps in metrics. It is assumed that all timestamps will be the same for a metrics set, but that is in no way guaranteed, and we need to acknowledge that there may be a gap
 			logRec.SetTimestamp(minTime)
@@ -146,6 +162,28 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 		}
 	}
 	return conn.metricsConsumer.ConsumeLogs(ctx, logs)
+}
+
+func extractAttributes(dps *pmetric.NumberDataPointSlice) map[string]any {
+	atts := make(map[string]any)
+	for i := 0; i < dps.Len(); i++ {
+		keys := maps.Keys(dps.At(i).Attributes().AsRaw())
+		for _, k := range keys {
+			atts[k], _ = dps.At(i).Attributes().Get(k)
+		}
+	}
+	return atts
+}
+
+func extractSummaryAttributes(dps *pmetric.SummaryDataPointSlice) map[string]any {
+	atts := make(map[string]any)
+	for i := 0; i < dps.Len(); i++ {
+		keys := maps.Keys(dps.At(i).Attributes().AsRaw())
+		for _, k := range keys {
+			atts[k], _ = dps.At(i).Attributes().Get(k)
+		}
+	}
+	return atts
 }
 
 // appendMetricDataPoints this takes all the provided data point in the provided slice and adds up the values while also determining the
@@ -163,15 +201,6 @@ func (conn *metricsToLogsConnector) appendMetricDataPoints(dps *pmetric.NumberDa
 		if maxT > dp.Timestamp() {
 			maxT = dp.Timestamp()
 		}
-		keys := maps.Keys(dp.Attributes().AsRaw())
-		if len(keys) > 0 {
-			conn.logger.Info(fmt.Sprintf("Attributes lost %s", keys))
-		}
-		//val := output.AppendEmpty()
-		// A Value can only be of a single Type, so you can't add a Map to a Double value
-		// because it will wipe out the double value and replace it with the map
-		//dp.Attributes().CopyTo(val.SetEmptyMap())
-		//val.SetDouble(dp.DoubleValue())
 		dbl = dbl + dp.DoubleValue()
 	}
 	return dbl, minT, maxT
