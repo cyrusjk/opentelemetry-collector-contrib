@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"github.com/oklog/ulid/v2"
 	"go.uber.org/zap"
+	"strings"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -109,18 +110,21 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 				metric := scopeMets.Metrics().At(c)
 				var minT = pcommon.NewTimestampFromTime(time.Now().Add(time.Hour))
 				var maxT = pcommon.NewTimestampFromTime(time.Now().Add(time.Hour * -1))
-				var attributesMap map[string]any = nil
+				attributesMap := map[string]any{
+					"metric.type": metric.Type().String(),
+					"metric.unit": metric.Unit(),
+				}
 				var dbl float64 = 0
 				switch metric.Type() {
 				case pmetric.MetricTypeSum:
 					// Do we care if it's a counter or not?
 					dps := metric.Sum().DataPoints()
 					dbl, minT, maxT = conn.appendMetricDataPoints(&dps)
-					attributesMap = extractAttributes(&dps)
+					//maps.Copy(extractAttributes(&dps), attributesMap)
 				case pmetric.MetricTypeGauge:
 					dps := metric.Gauge().DataPoints()
 					dbl, minT, maxT = conn.appendMetricDataPoints(&dps)
-					attributesMap = extractAttributes(&dps)
+					//maps.Copy(extractAttributes(&dps), attributesMap)
 				case pmetric.MetricTypeSummary:
 					dps := metric.Summary().DataPoints()
 					for d := 0; d < dps.Len(); d++ {
@@ -133,7 +137,8 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 							maxT = dp.Timestamp()
 						}
 					}
-					attributesMap = extractSummaryAttributes(&dps)
+					//maps.Copy(extractSummaryAttributes(&dps), attributesMap)
+
 				default:
 					conn.logger.Debug(fmt.Sprintf("Skipping mapping of %s;  %t metric type is not yet supported", metric.Name(), metric.Type()))
 					continue
@@ -145,14 +150,20 @@ func (conn *metricsToLogsConnector) ConsumeMetrics(ctx context.Context, ms pmetr
 					maxTime = maxT
 				}
 				atts.PutDouble(metric.Name(), dbl)
-				// This is one possible way to retain Metric Attributes in the Log record, and other strategies may be added as options later
-				if attributesMap != nil {
-					for k, v := range attributesMap {
-						atts.PutStr(metric.Name()+"."+k, v.(pcommon.Value).Str())
+
+				// This is one possible way to retain Metric Attributes in the Log record, but it will override any values of the same key, which may not be desirable
+				for k, v := range attributesMap {
+					// Flatten the appended key name
+					k = metric.Name() + "." + strings.Replace(k, ".", "_", -1)
+					switch v.(type) {
+					case string:
+						atts.PutStr(k, v.(string))
+					case pcommon.Value:
+						atts.PutStr(k, v.(pcommon.Value).Str())
+					default:
+						conn.logger.Warn(fmt.Sprintf("Attribute %s is of type %t and cannot be added to the Log record", k, v))
 					}
 				}
-				atts.PutStr(metric.Name()+".metric.type", metric.Type().String())
-				atts.PutStr(metric.Name()+".metric.unit", metric.Unit())
 			}
 			// Not sure what to do with/about different time stamps in metrics. It is assumed that all timestamps will be the same for a metrics set, but that is in no way guaranteed, and we need to acknowledge that there may be a gap
 			logRec.SetTimestamp(minTime)
