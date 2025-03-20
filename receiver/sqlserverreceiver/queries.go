@@ -4,8 +4,11 @@
 package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"strings"
+	"text/template"
 )
 
 // Direct access to queries is not recommended: The receiver allows filtering based on
@@ -337,42 +340,11 @@ func getSQLServerPropertiesQuery(instanceName string) string {
 	return fmt.Sprintf(sqlServerProperties, "")
 }
 
-const sqlServerQueryMetrics = `
-%s
-%s
-SELECT TOP(@topNValue)
-REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
-HOST_NAME() AS [computer_name],
-qs.query_hash AS query_hash,
-qs.query_plan_hash AS query_plan_hash,
-SUM(qs.execution_count) AS execution_count,
-SUM(qs.total_elapsed_time) AS total_elapsed_time,
-SUM(qs.total_worker_time) AS total_worker_time,
-SUM(qs.total_logical_reads) AS total_logical_reads,
-SUM(qs.total_physical_reads) AS total_physical_reads,
-SUM(qs.total_logical_writes) AS total_logical_writes,
-SUM(qs.total_rows) AS total_rows,
-SUM(qs.total_grant_kb) as total_grant_kb
-FROM sys.dm_exec_query_stats AS qs
-WHERE qs.last_execution_time BETWEEN DATEADD(SECOND, @granularity, GETDATE()) AND GETDATE() %s
-GROUP BY
-qs.query_hash,
-qs.query_plan_hash;
-`
+//go:embed templates/dbQueryAndTextQuery.tmpl
+var sqlServerQueryTextAndPlanQueryTemplate string
 
-const (
-	granularityDeclaration = `DECLARE @granularity INT = -%d;`
-	topNValueDeclaration   = `DECLARE @topNValue INT = %d;`
-)
-
-func getSQLServerQueryMetricsQuery(instanceName string, maxQuerySampleCount uint, granularity uint) string {
-	var topQueryCountStatement string
-	var granularityStatement string
+func getSQLServerQueryTextAndPlanQuery(instanceName string, maxQuerySampleCount uint, lookbackTime uint) (string, error) {
 	var instanceNameClause string
-
-	topQueryCountStatement = fmt.Sprintf(topNValueDeclaration, maxQuerySampleCount)
-
-	granularityStatement = fmt.Sprintf(granularityDeclaration, granularity)
 
 	if instanceName != "" {
 		instanceNameClause = fmt.Sprintf("AND @@SERVERNAME = '%s'", instanceName)
@@ -380,115 +352,16 @@ func getSQLServerQueryMetricsQuery(instanceName string, maxQuerySampleCount uint
 		instanceNameClause = ""
 	}
 
-	return fmt.Sprintf(sqlServerQueryMetrics, granularityStatement, topQueryCountStatement, instanceNameClause)
-}
+	tmpl := template.Must(template.New("dbQueryAndTextQuery").Option("missingkey=error").Parse(sqlServerQueryTextAndPlanQueryTemplate))
+	buf := bytes.Buffer{}
 
-const sqlServerQueryTextAndPlan = `
-%s
-%s
-with qstats as (
-SELECT TOP(@topNValue)
-REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
-HOST_NAME() AS [computer_name],
-MAX(qs.plan_handle) AS query_plan_handle,
-qs.query_hash AS query_hash,
-qs.query_plan_hash AS query_plan_hash,
-SUM(qs.execution_count) AS execution_count,
-SUM(qs.total_elapsed_time) AS total_elapsed_time,
-SUM(qs.total_worker_time) AS total_worker_time,
-SUM(qs.total_logical_reads) AS total_logical_reads,
-SUM(qs.total_physical_reads) AS total_physical_reads,
-SUM(qs.total_logical_writes) AS total_logical_writes,
-SUM(qs.total_rows) AS total_rows,
-SUM(qs.total_grant_kb) as total_grant_kb
-FROM sys.dm_exec_query_stats AS qs
-WHERE qs.last_execution_time BETWEEN DATEADD(SECOND, @granularity, GETDATE()) AND GETDATE() %s
-GROUP BY
-qs.query_hash,
-qs.query_plan_hash
-)
-SELECT qs.*,
-SUBSTRING(st.text, (stats.statement_start_offset / 2) + 1,
-		 ((CASE statement_end_offset
-			   WHEN -1 THEN DATALENGTH(st.text)
-			   ELSE stats.statement_end_offset END - stats.statement_start_offset) / 2) + 1) AS text,
-qp.query_plan FROM qstats AS qs
-INNER JOIN sys.dm_exec_query_stats AS stats on qs.query_plan_handle = stats.plan_handle
-CROSS APPLY sys.dm_exec_query_plan(qs.query_plan_handle) AS qp
-CROSS APPLY sys.dm_exec_sql_text(qs.query_plan_handle) AS st;
-`
-
-func getSQLServerQueryTextAndPlanQuery(instanceName string, maxQuerySampleCount uint, granularity uint) string {
-	var topQueryCountStatement string
-	var granularityStatement string
-	var instanceNameClause string
-
-	topQueryCountStatement = fmt.Sprintf(topNValueDeclaration, maxQuerySampleCount)
-
-	granularityStatement = fmt.Sprintf(granularityDeclaration, granularity)
-
-	if instanceName != "" {
-		instanceNameClause = fmt.Sprintf("AND @@SERVERNAME = '%s'", instanceName)
-	} else {
-		instanceNameClause = ""
+	if err := tmpl.Execute(&buf, map[string]any{
+		"topNValue":          maxQuerySampleCount,
+		"lookbackTime":       lookbackTime,
+		"instanceNameClause": instanceNameClause,
+	}); err != nil {
+		return "", fmt.Errorf("failed executing template: %w", err)
 	}
 
-	return fmt.Sprintf(sqlServerQueryTextAndPlan, granularityStatement, topQueryCountStatement, instanceNameClause)
-}
-
-const queryForQueryAndPlanText = `
-SELECT
-    REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
-    HOST_NAME() AS [computer_name],
-    st.text,
-    qp.query_plan AS plan_text,
-    SUBSTRING(st.text, (qs.statement_start_offset / 2) + 1,
-		 ((CASE statement_end_offset
-			   WHEN -1 THEN DATALENGTH(st.text)
-			   ELSE qs.statement_end_offset END - qs.statement_start_offset) / 2) + 1) AS query_text
-
-FROM
-    sys.dm_exec_query_stats AS qs
-        CROSS APPLY
-    sys.dm_exec_sql_text(qs.sql_handle) AS st
-        CROSS APPLY
-    sys.dm_exec_query_plan(qs.plan_handle) AS qp
-WHERE
-    qs.query_hash = ?
-  AND qs.query_plan_hash = ?;
-`
-
-func getQueryForQueryAndPlanText(handle string) string {
-	return queryForQueryAndPlanText
-}
-
-const sqlServerQuerySamples = `
-SELECT
-REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
-HOST_NAME() AS [computer_name],
-s.host_name,
-USER_NAME(r.user_id) AS user_name,
-s.login_name,
-s.original_login_name,
-DB_NAME(r.database_id) AS db_name,
-
-r.query_hash,
-r.query_plan_hash,
-r.wait_type,
- 
-CASE
-WHEN o.objectid IS NULL
-THEN NULL
-ELSE CONCAT(DB_NAME(o.dbid), '.', OBJECT_NAME(o.objectid, o.dbid))
-END
-AS object_name
-
-FROM sys.dm_exec_requests r
-INNER JOIN sys.dm_exec_sessions s
-ON r.session_id = s.session_id
-CROSS APPLY sys.dm_exec_sql_text(r.plan_handle) AS o;
-`
-
-func getSQLServerQuerySamplesQuery() string {
-	return sqlServerQuerySamples
+	return buf.String(), nil
 }

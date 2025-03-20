@@ -1,7 +1,7 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
-package sqlserverreceiver // Package sqlserverreceiver import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
+package sqlserverreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver"
 
 import (
 	"context"
@@ -21,10 +21,19 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/sqlserverreceiver/internal/metadata"
 )
 
-var (
-	errConfigNotSQLServer = errors.New("config was not a sqlserver receiver config")
-	sharedSubject         = NewSubject(200)
-)
+var errConfigNotSQLServer = errors.New("config was not a sqlserver receiver config")
+
+// newCache creates a new cache with the given size.
+// If the size is less or equal to 0, it will be set to 1.
+// It will never return an error.
+func newCache(size int) *lru.Cache[string, int64] {
+	if size <= 0 {
+		size = 1
+	}
+	// lru will only returns error when the size is less than 0
+	cache, _ := lru.New[string, int64](size)
+	return cache
+}
 
 // NewFactory creates a factory for SQL Server receiver.
 func NewFactory() receiver.Factory {
@@ -32,19 +41,21 @@ func NewFactory() receiver.Factory {
 		metadata.Type,
 		createDefaultConfig,
 		receiver.WithMetrics(createMetricsReceiver, metadata.MetricsStability),
-		receiver.WithLogs(createLogsReceiver, metadata.MetricsStability))
+		receiver.WithLogs(createLogsReceiver, metadata.LogsStability))
 }
 
 func createDefaultConfig() component.Config {
 	cfg := scraperhelper.NewDefaultControllerConfig()
 	cfg.CollectionInterval = 10 * time.Second
-	cfg.InitialDelay = time.Second
 	return &Config{
 		ControllerConfig:     cfg,
 		MetricsBuilderConfig: metadata.DefaultMetricsBuilderConfig(),
-		Granularity:          10,
-		MaxQuerySampleCount:  10000,
-		TopQueryCount:        200,
+		TopQueryCollection: TopQueryCollection{
+			Enabled:             false,
+			LookbackTime:        uint(2 * cfg.CollectionInterval / time.Second),
+			MaxQuerySampleCount: 1000,
+			TopQueryCount:       200,
+		},
 	}
 }
 
@@ -71,17 +82,23 @@ func setupQueries(cfg *Config) []string {
 		queries = append(queries, getSQLServerPropertiesQuery(cfg.InstanceName))
 	}
 
-	if cfg.MetricsBuilderConfig.Metrics.SqlserverQueryExecutionCount.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalElapsedTime.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalGrantKb.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalLogicalReads.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalLogicalWrites.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalPhysicalReads.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalRows.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalWorkerTime.Enabled {
-		queries = append(queries, getSQLServerQueryMetricsQuery(cfg.InstanceName, cfg.MaxQuerySampleCount, cfg.Granularity))
-	}
 	return queries
+}
+
+func setupLogQueries(cfg *Config) ([]string, []error) {
+	var queries []string
+	var errs []error
+
+	if cfg.Enabled {
+		q, err := getSQLServerQueryTextAndPlanQuery(cfg.InstanceName, cfg.MaxQuerySampleCount, cfg.LookbackTime)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			queries = append(queries, q)
+		}
+	}
+
+	return queries, errs
 }
 
 func directDBConnectionEnabled(config *Config) bool {
@@ -102,18 +119,6 @@ func setupSQLServerScrapers(params receiver.Settings, cfg *Config) []*sqlServerS
 		return nil
 	}
 
-	// Only create scrapers if at least one metric is enabled
-	if !(cfg.MetricsBuilderConfig.Metrics.SqlserverQueryExecutionCount.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalElapsedTime.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalGrantKb.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalLogicalReads.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalLogicalWrites.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalPhysicalReads.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalRows.Enabled ||
-		cfg.MetricsBuilderConfig.Metrics.SqlserverQueryTotalWorkerTime.Enabled) {
-		return nil
-	}
-
 	queries := setupQueries(cfg)
 	if len(queries) == 0 {
 		params.Logger.Info("No direct connection will be made to the SQL Server: No metrics are enabled requiring it.")
@@ -127,35 +132,20 @@ func setupSQLServerScrapers(params receiver.Settings, cfg *Config) []*sqlServerS
 	}
 
 	var scrapers []*sqlServerScraperHelper
-
 	for i, query := range queries {
 		id := component.NewIDWithName(metadata.Type, fmt.Sprintf("query-%d: %s", i, query))
 
-		var cache *lru.Cache[string, float64]
-		var err error
-
-		if query == getSQLServerQueryMetricsQuery(cfg.InstanceName, cfg.MaxQuerySampleCount, cfg.Granularity) {
-			cache, err = lru.New[string, float64](10000 * 10)
-			if err != nil {
-				params.Logger.Error("Failed to create LRU cache, skipping the current scraper", zap.Error(err))
-				continue
-			}
-		}
+		// lru only returns error when the size is less than 0
+		cache := newCache(1)
 
 		sqlServerScraper := newSQLServerScraper(id, query,
-			// TODO fix this; no need to break these out then pass in the config
-			cfg.MaxQuerySampleCount,
-			cfg.Granularity,
-			cfg.TopQueryCount,
-			cfg.InstanceName,
-			cfg,
-			params.Logger,
 			sqlquery.TelemetryConfig{},
 			dbProviderFunc,
 			sqlquery.NewDbClient,
-			metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params),
-			cache,
-			&sharedSubject)
+			params,
+			cfg,
+			cache)
+
 		scrapers = append(scrapers, sqlServerScraper)
 	}
 
@@ -163,15 +153,26 @@ func setupSQLServerScrapers(params receiver.Settings, cfg *Config) []*sqlServerS
 }
 
 // SQL Server scraper creation is split out into a separate method for the sake of testing.
-func setupSQLServerLogsScrapers(params receiver.Settings, cfg *Config) []*sqlServerLogsScraperHelper {
+func setupSQLServerLogsScrapers(params receiver.Settings, cfg *Config) []*sqlServerScraperHelper {
 	if !directDBConnectionEnabled(cfg) {
 		params.Logger.Info("No direct connection will be made to the SQL Server: Configuration doesn't include some options.")
 		return nil
 	}
 
-	queries := getLogQueries()
+	queries, errs := setupLogQueries(cfg)
+	if len(errs) > 0 {
+		params.Logger.Error("Failed to template queries in SQLServer receiver: Configuration might not be correct.", zap.Error(errors.Join(errs...)))
+		return nil
+	}
+
 	if len(queries) == 0 {
-		params.Logger.Info("No direct connection will be made to the SQL Server: No metrics are enabled requiring it.")
+		params.Logger.Info("No direct connection will be made to the SQL Server: No logs are enabled requiring it.")
+		return nil
+	}
+
+	queryTextAndPlanQuery, err := getSQLServerQueryTextAndPlanQuery(cfg.InstanceName, cfg.MaxQuerySampleCount, cfg.LookbackTime)
+	if err != nil {
+		params.Logger.Error("Failed to template needed queries in SQLServer receiver: Configuration might not be correct.", zap.Error(err))
 		return nil
 	}
 
@@ -181,22 +182,26 @@ func setupSQLServerLogsScrapers(params receiver.Settings, cfg *Config) []*sqlSer
 		return sql.Open("sqlserver", getDBConnectionString(cfg))
 	}
 
-	var scrapers []*sqlServerLogsScraperHelper
+	var scrapers []*sqlServerScraperHelper
 	for i, query := range queries {
 		id := component.NewIDWithName(metadata.Type, fmt.Sprintf("logs-query-%d: %s", i, query))
 
-		logScraper := newSQLServerLogsScraperHelper(
-			id,
-			query,
-			cfg,
-			params.Logger,
+		cache := newCache(1)
+
+		if query == queryTextAndPlanQuery {
+			// we have 8 metrics in this query and multiple 2 to allow to cache more queries.
+			cache = newCache(int(cfg.MaxQuerySampleCount * 8 * 2))
+		}
+
+		sqlServerScraper := newSQLServerScraper(id, query,
 			sqlquery.TelemetryConfig{},
 			dbProviderFunc,
 			sqlquery.NewDbClient,
-			metadata.NewMetricsBuilder(cfg.MetricsBuilderConfig, params),
-			&sharedSubject)
+			params,
+			cfg,
+			cache)
 
-		scrapers = append(scrapers, logScraper)
+		scrapers = append(scrapers, sqlServerScraper)
 	}
 
 	return scrapers
@@ -239,15 +244,11 @@ func setupLogsScrapers(params receiver.Settings, cfg *Config) ([]scraperhelper.C
 			return nil, err
 		}
 
-		// TODO ScraperHelper supports Logs, but does not have an AddScraper method that supports Logs
-		// This is a temporary workaround until the AddScraper method is updated to support Logs
-		f := scraper.NewFactory(metadata.Type, nil,
-			scraper.WithLogs(func(context.Context, scraper.Settings, component.Config) (scraper.Logs, error) {
-				return s, nil
-			}, component.StabilityLevelAlpha))
-
-		opt := scraperhelper.AddFactoryWithConfig(f, nil)
-
+		opt := scraperhelper.AddFactoryWithConfig(
+			scraper.NewFactory(metadata.Type, nil,
+				scraper.WithLogs(func(context.Context, scraper.Settings, component.Config) (scraper.Logs, error) {
+					return s, nil
+				}, component.StabilityLevelAlpha)), nil)
 		opts = append(opts, opt)
 	}
 
