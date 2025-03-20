@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/collector/scraper/scraperhelper"
 )
 
-// CreateMetricsReceiver creates a metrics receiver based on provided config.
+// createMetricsReceiver creates a metrics receiver based on provided config.
 func createMetricsReceiver(
 	_ context.Context,
 	params receiver.Settings,
@@ -39,7 +39,7 @@ func createMetricsReceiver(
 	)
 }
 
-// CreateLogsReceiver create a logs receiver based on provided config.
+// createLogsReceiver create a logs receiver based on provided config.
 func createLogsReceiver(
 	_ context.Context,
 	params receiver.Settings,
