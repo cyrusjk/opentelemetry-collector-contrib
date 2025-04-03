@@ -334,7 +334,7 @@ The number of unrestricted full table or index scans.
 
 | Unit | Metric Type | Value Type |
 | ---- | ----------- | ---------- |
-| {scans}/s | Gauge | Int |
+| {scans}/s | Gauge | Double |
 
 ### sqlserver.database.io
 
