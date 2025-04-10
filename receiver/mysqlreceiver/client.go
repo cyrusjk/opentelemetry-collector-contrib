@@ -782,6 +782,10 @@ func (c *mySQLClient) getInstanceIdentifiers() (InstanceIdentifiers, error) {
 	return ids, nil
 }
 
+func picoToSeconds(pico int64) float64 {
+	return float64(pico) / 1e12
+}
+
 func query(c mySQLClient, query string) (map[string]string, error) {
 	rows, err := c.client.Query(query)
 	if err != nil {

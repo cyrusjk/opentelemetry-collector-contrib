@@ -6,6 +6,7 @@ package mysqlreceiver // import "github.com/open-telemetry/opentelemetry-collect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"sort"
 	"strconv"
@@ -639,15 +640,31 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 		atts.PutStr("mysql.db.query.text", s.queryText)
 		atts.PutStr("mysql.db.query.hash", s.queryDigest)
 		if m.config.QueryMetricsAsLogs {
-			atts.PutInt("mysql.db.query.calls", s.count)
-			atts.PutInt("mysql.db.query.rows.returned", s.rowsReturned)
-			atts.PutInt("mysql.db.query.rows.total", s.rowsExamined)
-			// picoseconds
-			atts.PutDouble("mysql.db.query.time.cpu", float64(s.cpuTime)/1000000.0)
-			// normalized to picoseconds
-			atts.PutDouble("mysql.db.query.time.lock", float64(s.lockTime)/1000000.0)
-			// duration timers are in picoseconds
-			atts.PutDouble("mysql.db.query.time.total", float64(s.totalDuration)/1000000.0)
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.calls", s.count); isCached && diff > 0 {
+				atts.PutInt("mysql.db.query.calls", s.count)
+			}
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.returned", s.rowsReturned); isCached && diff > 0 {
+				atts.PutInt("mysql.db.query.rows.returned", s.rowsReturned)
+			}
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.total", s.rowsExamined); isCached && diff > 0 {
+				atts.PutInt("mysql.db.query.rows.total", s.rowsExamined)
+			}
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.cpu", s.cpuTime); isCached && diff > 0 {
+				// picoseconds to seconds
+				atts.PutDouble("mysql.db.query.time.cpu", float64(s.cpuTime)/1e12)
+			}
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.lock", s.lockTime); isCached && diff > 0 {
+				// picoseconds to seconds
+				atts.PutDouble("mysql.db.query.time.lock", float64(s.lockTime)/1e12)
+			}
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.total", s.totalDuration); isCached && diff > 0 {
+				// picoseconds to seconds
+				atts.PutDouble("mysql.db.query.time.total", float64(s.totalDuration)/1e12)
+			}
+			// short circuit if no attributes were set
+			if atts.Len() == 0 {
+				continue
+			}
 			atts.PutStr("mysql.db.query.schema", s.schema)
 		}
 	}
@@ -701,12 +718,24 @@ func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scraperer
 	recBuilder.SetMysqlDbMysqlVersion(ids.mySqlVersion)
 
 	for _, s := range matchedStats {
-		metricsBuilder.RecordMysqlQueryTimeCPUDataPoint(now, float64(s.cpuTime)/1000000, s.schema)
-		metricsBuilder.RecordMysqlQueryCallsDataPoint(now, s.count, s.schema)
-		metricsBuilder.RecordMysqlQueryTimeLockDataPoint(now, float64(s.lockTime)/1000000, s.schema)
-		metricsBuilder.RecordMysqlQueryRowsTotalDataPoint(now, s.rowsExamined, s.schema)
-		metricsBuilder.RecordMysqlQueryRowsReturnedDataPoint(now, s.rowsReturned, s.schema)
-		metricsBuilder.RecordMysqlQueryTimeTotalDataPoint(now, float64(s.totalDuration)/1000000, s.schema)
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.cpu", s.cpuTime); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryTimeCPUDataPoint(now, float64(s.cpuTime), s.schema)
+		}
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.calls", s.count); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryCallsDataPoint(now, s.count, s.schema)
+		}
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.lock", s.lockTime); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryTimeLockDataPoint(now, float64(s.lockTime), s.schema)
+		}
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.examined", s.rowsExamined); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryRowsTotalDataPoint(now, s.rowsExamined, s.schema)
+		}
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.returned", s.rowsReturned); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryRowsReturnedDataPoint(now, s.rowsReturned, s.schema)
+		}
+		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.total", s.totalDuration); isCached && diff > 0 {
+			metricsBuilder.RecordMysqlQueryTimeTotalDataPoint(now, float64(s.totalDuration), s.schema)
+		}
 	}
 }
 
@@ -730,6 +759,23 @@ func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest string, picoTime int64)
 		return true, int(picoTime - val)
 	}
 	return true, 0
+}
+
+func (m *mySQLScraper) checkAndDiffMetric(digest string, metricName string, picoTime int64) (bool, int64) {
+	if picoTime == 0 {
+		return false, 0
+	}
+	key := fmt.Sprintf("%s:%s", digest, metricName)
+	val, ok := m.cache.Get(key)
+	if !ok {
+		m.cache.Add(key, picoTime)
+		return false, 0
+	}
+	if picoTime > val {
+		m.cache.Add(key, picoTime)
+		return true, picoTime - val
+	}
+	return false, 0
 }
 
 func (m *mySQLScraper) scrapeReplicaStatusStats(now pcommon.Timestamp) {
