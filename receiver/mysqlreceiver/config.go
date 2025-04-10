@@ -75,6 +75,9 @@ func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 	if !componentParser.IsSet("query_metrics_as_logs") {
 		cfg.QueryMetricsAsLogs = true
 	}
+	if !componentParser.IsSet("top_query_count") {
+		cfg.TopQueryCollection.TopQueryCount = 200
+	}
 
 	return componentParser.Unmarshal(cfg)
 }

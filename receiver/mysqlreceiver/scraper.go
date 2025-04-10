@@ -29,7 +29,7 @@ type mySQLScraper struct {
 	logger    *zap.Logger
 	config    *Config
 	mb        *metadata.MetricsBuilder
-	cache     *lru.Cache[int64, int64]
+	cache     *lru.Cache[string, int64]
 
 	// Feature gates regarding resource attributes
 	renameCommands bool
@@ -61,6 +61,15 @@ func (m *mySQLScraper) start(_ context.Context, _ component.Host) error {
 		return err
 	}
 	m.sqlclient = sqlclient
+
+	if m.config.QueryMetricsAsLogs {
+		m.cache, err = lru.New[string, int64](100)
+
+		if err != nil {
+			m.logger.Error("Failed to create cache for query metrics", zap.Error(err))
+			return err
+		}
+	}
 
 	return nil
 }
@@ -628,7 +637,7 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 		log.SetEventName("top query")
 		atts := log.Attributes()
 		atts.PutStr("mysql.db.query.text", s.queryText)
-		atts.PutInt("mysql.db.query.hash", s.queryDigest)
+		atts.PutStr("mysql.db.query.hash", s.queryDigest)
 		if m.config.QueryMetricsAsLogs {
 			atts.PutInt("mysql.db.query.calls", s.count)
 			atts.PutInt("mysql.db.query.rows.returned", s.rowsReturned)
@@ -701,8 +710,8 @@ func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scraperer
 	}
 }
 
-func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest int64, picoTime int64) (bool, int) {
-	if digest == 0 {
+func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest string, picoTime int64) (bool, int) {
+	if digest == "" {
 		m.logger.Info("Digest is 0, skipping cache and diff execution times")
 		return false, 0
 	}

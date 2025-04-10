@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -194,7 +195,7 @@ type ReplicaStatusStats struct {
 
 type QueryStats struct {
 	queryText     string
-	queryDigest   int64
+	queryDigest   string
 	schema        string
 	count         int64
 	wait          int64
@@ -204,7 +205,7 @@ type QueryStats struct {
 	rowsReturned  int64
 	totalDuration int64
 	totalWait     int64
-	diffTime      int64
+	diffTime      int64 // only used during sort, not in scan
 }
 
 type InstanceIdentifiers struct {
@@ -705,15 +706,18 @@ func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, er
 		"sum(A.cpu_time) AS cpu_time," +
 		"sum(A.timer_wait) AS duration," +
 		"sum(A.rows_sent) AS rows_returned, " +
-		" B.sum_timer_wait AS total_wait " +
+		"B.sum_timer_wait AS total_wait, " +
+		"C.PROCESSLIST_ID as pl_id " +
 		"FROM performance_schema.events_statements_history AS A, " +
-		"performance_schema.events_statements_summary_by_digest AS B " +
+		"performance_schema.events_statements_summary_by_digest AS B, " +
+		"performance_schema.threads as C " +
 		"WHERE A.event_name = 'statement/sql/select' " +
-		"AND A.timer_start > " + string(since) + " " +
-		"AND A.digest = B.digest" +
-		"GROUP BY hash, query_text, schema_nm, total_wait " +
-		"ORDER BY duration desc" +
-		"LIMIT " + string(topCount) + ";"
+		"AND A.timer_start > " + strconv.FormatInt(since, 10) + " " +
+		"AND A.digest = B.digest " +
+		"GROUP BY hash, query_text, schema_nm, total_wait, pl_id " +
+		"ORDER BY duration desc " +
+		"LIMIT " + strconv.FormatInt(int64(topCount), 10) + ";"
+	fmt.Println(query)
 	rows, err := c.client.Query(query)
 	if err != nil {
 		return nil, err
@@ -723,19 +727,26 @@ func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, er
 	var stats []QueryStats
 	for rows.Next() {
 		var s QueryStats
+		var schemaName sql.NullString
+		var plId sql.NullInt64
 		err := rows.Scan(
 			&s.queryText,
 			&s.queryDigest,
 			&s.count,
-			&s.schema,
-			&s.wait,
+			&schemaName,
 			&s.lockTime,
 			&s.rowsExamined,
 			&s.cpuTime,
 			&s.totalDuration,
 			&s.rowsReturned,
 			&s.totalWait,
+			&plId, // processlist id, used in the query but not a metric
 		)
+		if schemaName.Valid {
+			s.schema = schemaName.String
+		} else {
+			s.schema = "NONE"
+		}
 		if err != nil {
 			return nil, err
 		}
