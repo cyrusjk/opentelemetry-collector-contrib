@@ -47,11 +47,23 @@ all_set:
       enabled: true
     mysql.prepared_statements:
       enabled: true
+    mysql.query.calls:
+      enabled: true
     mysql.query.client.count:
       enabled: true
     mysql.query.count:
       enabled: true
+    mysql.query.rows.returned:
+      enabled: true
+    mysql.query.rows.total:
+      enabled: true
     mysql.query.slow.count:
+      enabled: true
+    mysql.query.time.cpu:
+      enabled: true
+    mysql.query.time.lock:
+      enabled: true
+    mysql.query.time.total:
       enabled: true
     mysql.replica.sql_delay:
       enabled: true
@@ -94,6 +106,12 @@ all_set:
     mysql.uptime:
       enabled: true
   resource_attributes:
+    mysql.db.instance:
+      enabled: true
+    mysql.db.mysql_version:
+      enabled: true
+    mysql.db.system_version:
+      enabled: true
     mysql.instance.endpoint:
       enabled: true
 none_set:
@@ -144,11 +162,23 @@ none_set:
       enabled: false
     mysql.prepared_statements:
       enabled: false
+    mysql.query.calls:
+      enabled: false
     mysql.query.client.count:
       enabled: false
     mysql.query.count:
       enabled: false
+    mysql.query.rows.returned:
+      enabled: false
+    mysql.query.rows.total:
+      enabled: false
     mysql.query.slow.count:
+      enabled: false
+    mysql.query.time.cpu:
+      enabled: false
+    mysql.query.time.lock:
+      enabled: false
+    mysql.query.time.total:
       enabled: false
     mysql.replica.sql_delay:
       enabled: false
@@ -191,16 +221,46 @@ none_set:
     mysql.uptime:
       enabled: false
   resource_attributes:
+    mysql.db.instance:
+      enabled: false
+    mysql.db.mysql_version:
+      enabled: false
+    mysql.db.system_version:
+      enabled: false
     mysql.instance.endpoint:
       enabled: false
 filter_set_include:
   resource_attributes:
+    mysql.db.instance:
+      enabled: true
+      metrics_include:
+        - regexp: ".*"
+    mysql.db.mysql_version:
+      enabled: true
+      metrics_include:
+        - regexp: ".*"
+    mysql.db.system_version:
+      enabled: true
+      metrics_include:
+        - regexp: ".*"
     mysql.instance.endpoint:
       enabled: true
       metrics_include:
         - regexp: ".*"
 filter_set_exclude:
   resource_attributes:
+    mysql.db.instance:
+      enabled: true
+      metrics_exclude:
+        - strict: "mysql.db.instance-val"
+    mysql.db.mysql_version:
+      enabled: true
+      metrics_exclude:
+        - strict: "mysql.db.mysql_version-val"
+    mysql.db.system_version:
+      enabled: true
+      metrics_exclude:
+        - strict: "mysql.db.system_version-val"
     mysql.instance.endpoint:
       enabled: true
       metrics_exclude:

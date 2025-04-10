@@ -25,7 +25,7 @@ import (
 )
 
 func TestScrape(t *testing.T) {
-	t.Run("successful scrape", func(t *testing.T) {
+	t.Run("successful scrapeMetrics", func(t *testing.T) {
 		cfg := createDefaultConfig().(*Config)
 		cfg.Username = "otel"
 		cfg.Password = "otel"
@@ -72,7 +72,7 @@ func TestScrape(t *testing.T) {
 
 		scraper.renameCommands = true
 
-		actualMetrics, err := scraper.scrape(context.Background())
+		actualMetrics, err := scraper.scrapeMetrics(context.Background())
 		require.NoError(t, err)
 
 		expectedFile := filepath.Join("testdata", "scraper", "expected.yaml")
@@ -83,7 +83,7 @@ func TestScrape(t *testing.T) {
 			pmetrictest.IgnoreMetricDataPointsOrder(), pmetrictest.IgnoreStartTimestamp(), pmetrictest.IgnoreTimestamp()))
 	})
 
-	t.Run("scrape has partial failure", func(t *testing.T) {
+	t.Run("scrapeMetrics has partial failure", func(t *testing.T) {
 		cfg := createDefaultConfig().(*Config)
 		cfg.Username = "otel"
 		cfg.Password = "otel"
@@ -108,7 +108,7 @@ func TestScrape(t *testing.T) {
 			replicaStatusFile:           "replica_stats_empty",
 		}
 
-		actualMetrics, scrapeErr := scraper.scrape(context.Background())
+		actualMetrics, scrapeErr := scraper.scrapeMetrics(context.Background())
 		require.Error(t, scrapeErr)
 
 		expectedFile := filepath.Join("testdata", "scraper", "expected_partial.yaml")
@@ -150,7 +150,7 @@ func TestScrapeBufferPoolPagesMiscOutOfBounds(t *testing.T) {
 
 	scraper.renameCommands = true
 
-	actualMetrics, err := scraper.scrape(context.Background())
+	actualMetrics, err := scraper.scrapeMetrics(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, pmetrictest.CompareMetrics(actualMetrics, expectedMetrics,
 		pmetrictest.IgnoreMetricDataPointsOrder(), pmetrictest.IgnoreStartTimestamp(), pmetrictest.IgnoreTimestamp()))

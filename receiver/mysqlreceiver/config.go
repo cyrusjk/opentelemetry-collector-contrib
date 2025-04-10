@@ -31,12 +31,32 @@ type Config struct {
 	TLS                            configtls.ClientConfig        `mapstructure:"tls,omitempty"`
 	MetricsBuilderConfig           metadata.MetricsBuilderConfig `mapstructure:",squash"`
 	StatementEvents                StatementEventsConfig         `mapstructure:"statement_events"`
+	QueryMetricsAsLogs             bool                          `mapstructure:"query_metrics_as_logs"`
+	TopQueryCollection             TopQueryCollection            `mapstructure:"top_query_collection"`
+	QuerySample                    QuerySample                   `mapstructure:"query_sample"`
 }
 
 type StatementEventsConfig struct {
 	DigestTextLimit int           `mapstructure:"digest_text_limit"`
 	Limit           int           `mapstructure:"limit"`
 	TimeLimit       time.Duration `mapstructure:"time_limit"`
+}
+
+type QuerySample struct {
+	Enabled         bool   `mapstructure:"enabled"`
+	MaxRowsPerQuery uint64 `mapstructure:"max_rows_per_query"`
+}
+
+type TopQueryCollection struct {
+	// Enabled enables the collection of the top queries by the execution time.
+	// It will collect the top N queries based on totalElapsedTimeDiffs during the last collection interval.
+	// The query statement will also be reported, hence, it is not ideal to send it as a metric. Hence
+	// we are reporting them as logs.
+	// The `N` is configured via `TopQueryCount`
+	Enabled             bool `mapstructure:"enabled"`
+	LookbackTime        uint `mapstructure:"lookback_time"`
+	MaxQuerySampleCount uint `mapstructure:"max_query_sample_count"`
+	TopQueryCount       uint `mapstructure:"top_query_count"`
 }
 
 func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
@@ -50,6 +70,10 @@ func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 	if !componentParser.IsSet("tls") {
 		cfg.TLS = configtls.ClientConfig{}
 		cfg.TLS.Insecure = true
+	}
+
+	if !componentParser.IsSet("query_metrics_as_logs") {
+		cfg.QueryMetricsAsLogs = true
 	}
 
 	return componentParser.Unmarshal(cfg)

@@ -26,6 +26,8 @@ type client interface {
 	getStatementEventsStats() ([]StatementEventStats, error)
 	getTableLockWaitEventStats() ([]tableLockWaitEventStats, error)
 	getReplicaStatusStats() ([]ReplicaStatusStats, error)
+	getQueryStats(since int64, topCount int) ([]QueryStats, error)
+	getInstanceIdentifiers() (InstanceIdentifiers, error)
 	Close() error
 }
 
@@ -188,6 +190,27 @@ type ReplicaStatusStats struct {
 	parallelMode                string
 	replicateDoDomainIDs        string
 	replicateIgnoreDomainIDs    string
+}
+
+type QueryStats struct {
+	queryText     string
+	queryDigest   int64
+	schema        string
+	count         int64
+	wait          int64
+	lockTime      int64
+	cpuTime       int64
+	rowsExamined  int64
+	rowsReturned  int64
+	totalDuration int64
+	totalWait     int64
+	diffTime      int64
+}
+
+type InstanceIdentifiers struct {
+	hostnames     string
+	systemVersion string
+	mySqlVersion  string
 }
 
 var _ client = (*mySQLClient)(nil)
@@ -669,6 +692,83 @@ func (c *mySQLClient) getReplicaStatusStats() ([]ReplicaStatusStats, error) {
 	}
 
 	return stats, nil
+}
+
+// TODO take a timestamp and restrict the timer_start < timestamp
+func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, error) {
+	query := "SELECT A.digest_text AS query_text," +
+		"A.digest AS hash," +
+		"count(*) AS execution_count," +
+		"A.current_schema AS schema_nm," +
+		"sum(A.lock_time) AS lock_time," +
+		"sum(A.rows_examined) AS total_rows," +
+		"sum(A.cpu_time) AS cpu_time," +
+		"sum(A.timer_wait) AS duration," +
+		"sum(A.rows_sent) AS rows_returned, " +
+		" B.sum_timer_wait AS total_wait " +
+		"FROM performance_schema.events_statements_history AS A, " +
+		"performance_schema.events_statements_summary_by_digest AS B " +
+		"WHERE A.event_name = 'statement/sql/select' " +
+		"AND A.timer_start > " + string(since) + " " +
+		"AND A.digest = B.digest" +
+		"GROUP BY hash, query_text, schema_nm, total_wait " +
+		"ORDER BY duration desc" +
+		"LIMIT " + string(topCount) + ";"
+	rows, err := c.client.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stats []QueryStats
+	for rows.Next() {
+		var s QueryStats
+		err := rows.Scan(
+			&s.queryText,
+			&s.queryDigest,
+			&s.count,
+			&s.schema,
+			&s.wait,
+			&s.lockTime,
+			&s.rowsExamined,
+			&s.cpuTime,
+			&s.totalDuration,
+			&s.rowsReturned,
+			&s.totalWait,
+		)
+		if err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, nil
+}
+
+func (c *mySQLClient) getInstanceIdentifiers() (InstanceIdentifiers, error) {
+	query := "select ver.sys_version as sys_version, ver.mysql_version as mysql_version, hs.host as host " +
+		"FROM sys.version as ver, sys.host_summary as hs " +
+		"WHERE host NOT IN ('localhost', '127.0.0.1') " +
+		"order by host;"
+	rows, err := c.client.Query(query)
+	if err != nil {
+		return InstanceIdentifiers{}, err
+	}
+	defer rows.Close()
+	ids := InstanceIdentifiers{}
+	for rows.Next() {
+		var host string
+		err := rows.Scan(&ids.systemVersion, &ids.mySqlVersion, &host)
+		if err != nil {
+			return InstanceIdentifiers{}, err
+		}
+		// an instance may have multiple hostnames and/or IPs. If that is the case, concat into csv
+		if len(ids.hostnames) > 0 {
+			ids.hostnames = ids.hostnames + "," + host
+		} else {
+			ids.hostnames = host
+		}
+	}
+	return ids, nil
 }
 
 func query(c mySQLClient, query string) (map[string]string, error) {

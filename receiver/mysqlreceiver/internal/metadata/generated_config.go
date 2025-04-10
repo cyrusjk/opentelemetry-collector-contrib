@@ -51,9 +51,15 @@ type MetricsConfig struct {
 	MysqlOperations              MetricConfig `mapstructure:"mysql.operations"`
 	MysqlPageOperations          MetricConfig `mapstructure:"mysql.page_operations"`
 	MysqlPreparedStatements      MetricConfig `mapstructure:"mysql.prepared_statements"`
+	MysqlQueryCalls              MetricConfig `mapstructure:"mysql.query.calls"`
 	MysqlQueryClientCount        MetricConfig `mapstructure:"mysql.query.client.count"`
 	MysqlQueryCount              MetricConfig `mapstructure:"mysql.query.count"`
+	MysqlQueryRowsReturned       MetricConfig `mapstructure:"mysql.query.rows.returned"`
+	MysqlQueryRowsTotal          MetricConfig `mapstructure:"mysql.query.rows.total"`
 	MysqlQuerySlowCount          MetricConfig `mapstructure:"mysql.query.slow.count"`
+	MysqlQueryTimeCPU            MetricConfig `mapstructure:"mysql.query.time.cpu"`
+	MysqlQueryTimeLock           MetricConfig `mapstructure:"mysql.query.time.lock"`
+	MysqlQueryTimeTotal          MetricConfig `mapstructure:"mysql.query.time.total"`
 	MysqlReplicaSQLDelay         MetricConfig `mapstructure:"mysql.replica.sql_delay"`
 	MysqlReplicaTimeBehindSource MetricConfig `mapstructure:"mysql.replica.time_behind_source"`
 	MysqlRowLocks                MetricConfig `mapstructure:"mysql.row_locks"`
@@ -147,14 +153,32 @@ func DefaultMetricsConfig() MetricsConfig {
 		MysqlPreparedStatements: MetricConfig{
 			Enabled: true,
 		},
+		MysqlQueryCalls: MetricConfig{
+			Enabled: true,
+		},
 		MysqlQueryClientCount: MetricConfig{
 			Enabled: false,
 		},
 		MysqlQueryCount: MetricConfig{
 			Enabled: false,
 		},
+		MysqlQueryRowsReturned: MetricConfig{
+			Enabled: true,
+		},
+		MysqlQueryRowsTotal: MetricConfig{
+			Enabled: true,
+		},
 		MysqlQuerySlowCount: MetricConfig{
 			Enabled: false,
+		},
+		MysqlQueryTimeCPU: MetricConfig{
+			Enabled: true,
+		},
+		MysqlQueryTimeLock: MetricConfig{
+			Enabled: true,
+		},
+		MysqlQueryTimeTotal: MetricConfig{
+			Enabled: true,
 		},
 		MysqlReplicaSQLDelay: MetricConfig{
 			Enabled: false,
@@ -247,11 +271,23 @@ func (rac *ResourceAttributeConfig) Unmarshal(parser *confmap.Conf) error {
 
 // ResourceAttributesConfig provides config for mysql resource attributes.
 type ResourceAttributesConfig struct {
+	MysqlDbInstance       ResourceAttributeConfig `mapstructure:"mysql.db.instance"`
+	MysqlDbMysqlVersion   ResourceAttributeConfig `mapstructure:"mysql.db.mysql_version"`
+	MysqlDbSystemVersion  ResourceAttributeConfig `mapstructure:"mysql.db.system_version"`
 	MysqlInstanceEndpoint ResourceAttributeConfig `mapstructure:"mysql.instance.endpoint"`
 }
 
 func DefaultResourceAttributesConfig() ResourceAttributesConfig {
 	return ResourceAttributesConfig{
+		MysqlDbInstance: ResourceAttributeConfig{
+			Enabled: true,
+		},
+		MysqlDbMysqlVersion: ResourceAttributeConfig{
+			Enabled: true,
+		},
+		MysqlDbSystemVersion: ResourceAttributeConfig{
+			Enabled: true,
+		},
 		MysqlInstanceEndpoint: ResourceAttributeConfig{
 			Enabled: true,
 		},

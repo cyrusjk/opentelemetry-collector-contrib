@@ -6,9 +6,12 @@ package mysqlreceiver // import "github.com/open-telemetry/opentelemetry-collect
 import (
 	"context"
 	"errors"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"sort"
 	"strconv"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -19,14 +22,19 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver/internal/metadata"
 )
 
+var ()
+
 type mySQLScraper struct {
 	sqlclient client
 	logger    *zap.Logger
 	config    *Config
 	mb        *metadata.MetricsBuilder
+	cache     *lru.Cache[int64, int64]
 
 	// Feature gates regarding resource attributes
 	renameCommands bool
+
+	lastQueryMetricsGatheringTime int64
 }
 
 func newMySQLScraper(
@@ -34,9 +42,10 @@ func newMySQLScraper(
 	config *Config,
 ) *mySQLScraper {
 	return &mySQLScraper{
-		logger: settings.Logger,
-		config: config,
-		mb:     metadata.NewMetricsBuilder(config.MetricsBuilderConfig, settings),
+		logger:                        settings.Logger,
+		config:                        config,
+		mb:                            metadata.NewMetricsBuilder(config.MetricsBuilderConfig, settings),
+		lastQueryMetricsGatheringTime: -1,
 	}
 }
 
@@ -64,8 +73,8 @@ func (m *mySQLScraper) shutdown(context.Context) error {
 	return m.sqlclient.Close()
 }
 
-// scrape scrapes the mysql db metric stats, transforms them and labels them into a metric slices.
-func (m *mySQLScraper) scrape(context.Context) (pmetric.Metrics, error) {
+// scrapeMetrics scrapes the mysql db metric stats, transforms them and labels them into a metric slices.
+func (m *mySQLScraper) scrapeMetrics(context.Context) (pmetric.Metrics, error) {
 	if m.sqlclient == nil {
 		return pmetric.Metrics{}, errors.New("failed to connect to http client")
 	}
@@ -107,9 +116,26 @@ func (m *mySQLScraper) scrape(context.Context) (pmetric.Metrics, error) {
 
 	rb := m.mb.NewResourceBuilder()
 	rb.SetMysqlInstanceEndpoint(m.config.Endpoint)
+	rb.SetMysqlInstanceEndpoint(m.config.Endpoint)
+	ids, err := m.sqlclient.getInstanceIdentifiers()
+	if err != nil {
+		m.logger.Error("Failed to fetch instance info", zap.Error(err))
+		errs.AddPartial(1, err)
+		return m.mb.Emit(), errs.Combine()
+	} else {
+		rb.SetMysqlDbInstance(ids.hostnames)
+		rb.SetMysqlDbSystemVersion(ids.systemVersion)
+		rb.SetMysqlDbMysqlVersion(ids.mySqlVersion)
+	}
+
 	m.mb.EmitForResource(metadata.WithResource(rb.Emit()))
 
 	return m.mb.Emit(), errs.Combine()
+}
+
+func (m *mySQLScraper) scrapeLogs(ctx context.Context) (plog.Logs, error) {
+	errs := &scrapererror.ScrapeErrors{}
+	return m.scrapeQueryLogs(pcommon.NewTimestampFromTime(time.Now()), errs), errs.Combine()
 }
 
 func (m *mySQLScraper) scrapeGlobalStats(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) {
@@ -564,6 +590,137 @@ func (m *mySQLScraper) scrapeTableLockWaitEventStats(now pcommon.Timestamp, errs
 		m.mb.RecordMysqlTableLockWaitWriteTimeDataPoint(now, s.sumTimerWriteNormal, s.schema, s.name, metadata.AttributeWriteLockTypeNormal)
 		m.mb.RecordMysqlTableLockWaitWriteTimeDataPoint(now, s.sumTimerWriteExternal, s.schema, s.name, metadata.AttributeWriteLockTypeExternal)
 	}
+}
+
+func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) plog.Logs {
+	ids, err := m.sqlclient.getInstanceIdentifiers()
+	if err != nil {
+		m.logger.Error("Failed to fetch instance info", zap.Error(err))
+		errs.AddPartial(1, err)
+		return plog.Logs{}
+	}
+
+	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
+	if err != nil {
+		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
+		errs.AddPartial(1, err)
+		return plog.Logs{}
+	}
+	if len(queryStats) == 0 {
+		m.logger.Debug("No query logs stats found")
+		return plog.Logs{}
+	}
+
+	matchedStats := m.sortAndReduceTopQueryStats(queryStats)
+
+	logs := plog.NewLogs()
+	recLogs := logs.ResourceLogs().AppendEmpty()
+	recRes := recLogs.Resource().Attributes()
+	recRes.PutStr("mysql.instance.endpoint", m.config.Endpoint)
+	recRes.PutStr("mysql.db.instance", ids.hostnames)
+	recRes.PutStr("mysql.db.system_version", ids.systemVersion)
+	recRes.PutStr("mysql.db.mysql_version", ids.mySqlVersion)
+
+	scopeLogs := recLogs.ScopeLogs().AppendEmpty()
+	for _, s := range matchedStats {
+		log := scopeLogs.LogRecords().AppendEmpty()
+		log.SetTimestamp(now)
+		log.SetEventName("top query")
+		atts := log.Attributes()
+		atts.PutStr("mysql.db.query.text", s.queryText)
+		atts.PutInt("mysql.db.query.hash", s.queryDigest)
+		if m.config.QueryMetricsAsLogs {
+			atts.PutInt("mysql.db.query.calls", s.count)
+			atts.PutInt("mysql.db.query.rows.returned", s.rowsReturned)
+			atts.PutInt("mysql.db.query.rows.total", s.rowsExamined)
+			// picoseconds
+			atts.PutDouble("mysql.db.query.time.cpu", float64(s.cpuTime)/1000000.0)
+			// normalized to picoseconds
+			atts.PutDouble("mysql.db.query.time.lock", float64(s.lockTime)/1000000.0)
+			// duration timers are in picoseconds
+			atts.PutDouble("mysql.db.query.time.total", float64(s.totalDuration)/1000000.0)
+			atts.PutStr("mysql.db.query.schema", s.schema)
+		}
+	}
+	return logs
+}
+
+func (m *mySQLScraper) sortAndReduceTopQueryStats(stats []QueryStats) []QueryStats {
+	matchedStats := []QueryStats{}
+	for _, stat := range stats {
+		if cached, diff := m.cacheAndDiffExecutionTimes(stat.queryDigest, stat.totalWait); cached && diff > 0 {
+			matchedStats = append(matchedStats, stat)
+		}
+	}
+	sort.Slice(matchedStats, func(i, j int) bool {
+		return matchedStats[i].totalWait > matchedStats[j].totalWait
+	})
+	if len(matchedStats) > int(m.config.TopQueryCollection.TopQueryCount) {
+		matchedStats = matchedStats[:m.config.TopQueryCollection.TopQueryCount]
+	}
+	return matchedStats
+}
+
+func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) {
+	if m.config.QueryMetricsAsLogs {
+		return
+	}
+	ids, err := m.sqlclient.getInstanceIdentifiers()
+	if err != nil {
+		m.logger.Error("Failed to fetch instance info", zap.Error(err))
+		errs.AddPartial(1, err)
+		return
+	}
+	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
+	if err != nil {
+		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
+		errs.AddPartial(1, err)
+		return
+	}
+	if len(queryStats) == 0 {
+		m.logger.Debug("No query logs stats found")
+		return
+	}
+
+	matchedStats := m.sortAndReduceTopQueryStats(queryStats)
+
+	metricsBuilder := m.mb
+	recBuilder := metricsBuilder.NewResourceBuilder()
+	recBuilder.SetMysqlInstanceEndpoint(m.config.Endpoint)
+	recBuilder.SetMysqlDbInstance(ids.hostnames)
+	recBuilder.SetMysqlDbSystemVersion(ids.systemVersion)
+	recBuilder.SetMysqlDbMysqlVersion(ids.mySqlVersion)
+
+	for _, s := range matchedStats {
+		metricsBuilder.RecordMysqlQueryTimeCPUDataPoint(now, float64(s.cpuTime)/1000000, s.schema)
+		metricsBuilder.RecordMysqlQueryCallsDataPoint(now, s.count, s.schema)
+		metricsBuilder.RecordMysqlQueryTimeLockDataPoint(now, float64(s.lockTime)/1000000, s.schema)
+		metricsBuilder.RecordMysqlQueryRowsTotalDataPoint(now, s.rowsExamined, s.schema)
+		metricsBuilder.RecordMysqlQueryRowsReturnedDataPoint(now, s.rowsReturned, s.schema)
+		metricsBuilder.RecordMysqlQueryTimeTotalDataPoint(now, float64(s.totalDuration)/1000000, s.schema)
+	}
+}
+
+func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest int64, picoTime int64) (bool, int) {
+	if digest == 0 {
+		m.logger.Info("Digest is 0, skipping cache and diff execution times")
+		return false, 0
+	}
+	if picoTime == 0 {
+		m.logger.Info("PicoTime is 0, skipping cache and diff execution times")
+		return false, 0
+	}
+
+	val, ok := m.cache.Get(digest)
+	if !ok {
+		m.cache.Add(digest, picoTime)
+		return false, 0
+	}
+	if picoTime > val {
+		m.cache.Add(digest, picoTime)
+		return true, int(picoTime - val)
+	}
+	return true, 0
 }
 
 func (m *mySQLScraper) scrapeReplicaStatusStats(now pcommon.Timestamp) {

@@ -3,7 +3,7 @@ type: mysql
 status:
   class: receiver
   stability:
-    unmaintained: [metrics]
+    unmaintained: [metrics, logs]
   distributions: [contrib]
   codeowners:
     seeking_new: true
@@ -14,7 +14,18 @@ resource_attributes:
     description: Endpoint of the MySQL instance.
     enabled: true
     type: string
-
+  mysql.db.instance:
+    description: The name of the database instance.
+    enabled: true
+    type: string
+  mysql.db.system_version:
+    description: The system version of the database.
+    enabled: true
+    type: string
+  mysql.db.mysql_version:
+    description: The MySQL version of the database.
+    enabled: true
+    type: string
 attributes:
   buffer_pool_pages:
     name_override: kind
@@ -612,3 +623,58 @@ metrics:
       input_type: string
       monotonic: true
       aggregation_temporality: cumulative
+# Query metrics
+  mysql.query.time.lock:
+    enabled: true
+    description: The total lock time for the query.
+    unit: ns
+    sum:
+      value_type: double
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
+  mysql.query.time.cpu:
+    enabled: true
+    description: The total CPU time for the query.
+    unit: ns
+    sum:
+      value_type: double
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
+  mysql.query.rows.total:
+    enabled: true
+    description: The total number of rows examined by the query.
+    unit: count
+    sum:
+      value_type: int
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
+  mysql.query.rows.returned:
+    enabled: true
+    description: The total number of rows returned by the query.
+    unit: count
+    sum:
+      value_type: int
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
+  mysql.query.time.total:
+    enabled: true
+    description: The total duration of the query.
+    unit: ns
+    sum:
+      value_type: double
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
+  mysql.query.calls:
+    enabled: true
+    description: The total number of times the query was executed.
+    unit: count
+    sum:
+      value_type: int
+      monotonic: false
+      aggregation_temporality: cumulative
+    attributes: [schema]
