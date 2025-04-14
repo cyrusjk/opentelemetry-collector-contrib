@@ -2254,7 +2254,7 @@ func (m *metricMysqlQueryCalls) init() {
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryCalls) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
+func (m *metricMysqlQueryCalls) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2262,7 +2262,7 @@ func (m *metricMysqlQueryCalls) recordDataPoint(start pcommon.Timestamp, ts pcom
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetIntValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -2409,7 +2409,7 @@ func (m *metricMysqlQueryRowsReturned) init() {
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryRowsReturned) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
+func (m *metricMysqlQueryRowsReturned) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2417,7 +2417,7 @@ func (m *metricMysqlQueryRowsReturned) recordDataPoint(start pcommon.Timestamp, 
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetIntValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -2462,7 +2462,7 @@ func (m *metricMysqlQueryRowsTotal) init() {
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryRowsTotal) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
+func (m *metricMysqlQueryRowsTotal) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2470,7 +2470,7 @@ func (m *metricMysqlQueryRowsTotal) recordDataPoint(start pcommon.Timestamp, ts 
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetIntValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -2559,14 +2559,14 @@ type metricMysqlQueryTimeCPU struct {
 func (m *metricMysqlQueryTimeCPU) init() {
 	m.data.SetName("mysql.query.time.cpu")
 	m.data.SetDescription("The total CPU time for the query.")
-	m.data.SetUnit("ns")
+	m.data.SetUnit("picoseconds")
 	m.data.SetEmptySum()
 	m.data.Sum().SetIsMonotonic(false)
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryTimeCPU) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
+func (m *metricMysqlQueryTimeCPU) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2574,7 +2574,7 @@ func (m *metricMysqlQueryTimeCPU) recordDataPoint(start pcommon.Timestamp, ts pc
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetDoubleValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -2612,14 +2612,14 @@ type metricMysqlQueryTimeLock struct {
 func (m *metricMysqlQueryTimeLock) init() {
 	m.data.SetName("mysql.query.time.lock")
 	m.data.SetDescription("The total lock time for the query.")
-	m.data.SetUnit("ns")
+	m.data.SetUnit("picoseconds")
 	m.data.SetEmptySum()
 	m.data.Sum().SetIsMonotonic(false)
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryTimeLock) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
+func (m *metricMysqlQueryTimeLock) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2627,7 +2627,7 @@ func (m *metricMysqlQueryTimeLock) recordDataPoint(start pcommon.Timestamp, ts p
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetDoubleValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -2665,14 +2665,14 @@ type metricMysqlQueryTimeTotal struct {
 func (m *metricMysqlQueryTimeTotal) init() {
 	m.data.SetName("mysql.query.time.total")
 	m.data.SetDescription("The total duration of the query.")
-	m.data.SetUnit("ns")
+	m.data.SetUnit("picoseconds")
 	m.data.SetEmptySum()
 	m.data.Sum().SetIsMonotonic(false)
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 }
 
-func (m *metricMysqlQueryTimeTotal) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
+func (m *metricMysqlQueryTimeTotal) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
 	if !m.config.Enabled {
 		return
 	}
@@ -2680,7 +2680,7 @@ func (m *metricMysqlQueryTimeTotal) recordDataPoint(start pcommon.Timestamp, ts 
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
 	dp.SetDoubleValue(val)
-	dp.Attributes().PutStr("schema", schemaAttributeValue)
+	dp.Attributes().PutEmptySlice("schemas").FromRaw(schemasAttributeValue)
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -4312,8 +4312,8 @@ func (mb *MetricsBuilder) RecordMysqlPreparedStatementsDataPoint(ts pcommon.Time
 }
 
 // RecordMysqlQueryCallsDataPoint adds a data point to mysql.query.calls metric.
-func (mb *MetricsBuilder) RecordMysqlQueryCallsDataPoint(ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
-	mb.metricMysqlQueryCalls.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryCallsDataPoint(ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryCalls.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlQueryClientCountDataPoint adds a data point to mysql.query.client.count metric.
@@ -4337,13 +4337,13 @@ func (mb *MetricsBuilder) RecordMysqlQueryCountDataPoint(ts pcommon.Timestamp, i
 }
 
 // RecordMysqlQueryRowsReturnedDataPoint adds a data point to mysql.query.rows.returned metric.
-func (mb *MetricsBuilder) RecordMysqlQueryRowsReturnedDataPoint(ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
-	mb.metricMysqlQueryRowsReturned.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryRowsReturnedDataPoint(ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryRowsReturned.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlQueryRowsTotalDataPoint adds a data point to mysql.query.rows.total metric.
-func (mb *MetricsBuilder) RecordMysqlQueryRowsTotalDataPoint(ts pcommon.Timestamp, val int64, schemaAttributeValue string) {
-	mb.metricMysqlQueryRowsTotal.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryRowsTotalDataPoint(ts pcommon.Timestamp, val int64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryRowsTotal.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlQuerySlowCountDataPoint adds a data point to mysql.query.slow.count metric.
@@ -4357,18 +4357,18 @@ func (mb *MetricsBuilder) RecordMysqlQuerySlowCountDataPoint(ts pcommon.Timestam
 }
 
 // RecordMysqlQueryTimeCPUDataPoint adds a data point to mysql.query.time.cpu metric.
-func (mb *MetricsBuilder) RecordMysqlQueryTimeCPUDataPoint(ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
-	mb.metricMysqlQueryTimeCPU.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryTimeCPUDataPoint(ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryTimeCPU.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlQueryTimeLockDataPoint adds a data point to mysql.query.time.lock metric.
-func (mb *MetricsBuilder) RecordMysqlQueryTimeLockDataPoint(ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
-	mb.metricMysqlQueryTimeLock.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryTimeLockDataPoint(ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryTimeLock.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlQueryTimeTotalDataPoint adds a data point to mysql.query.time.total metric.
-func (mb *MetricsBuilder) RecordMysqlQueryTimeTotalDataPoint(ts pcommon.Timestamp, val float64, schemaAttributeValue string) {
-	mb.metricMysqlQueryTimeTotal.recordDataPoint(mb.startTime, ts, val, schemaAttributeValue)
+func (mb *MetricsBuilder) RecordMysqlQueryTimeTotalDataPoint(ts pcommon.Timestamp, val float64, schemasAttributeValue []any) {
+	mb.metricMysqlQueryTimeTotal.recordDataPoint(mb.startTime, ts, val, schemasAttributeValue)
 }
 
 // RecordMysqlReplicaSQLDelayDataPoint adds a data point to mysql.replica.sql_delay metric.

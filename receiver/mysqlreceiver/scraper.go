@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	ttl "github.com/jellydator/ttlcache/v3"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -23,14 +23,12 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/mysqlreceiver/internal/metadata"
 )
 
-var ()
-
 type mySQLScraper struct {
 	sqlclient client
 	logger    *zap.Logger
 	config    *Config
 	mb        *metadata.MetricsBuilder
-	cache     *lru.Cache[string, int64]
+	cache     *ttl.Cache[string, float64]
 
 	// Feature gates regarding resource attributes
 	renameCommands bool
@@ -64,14 +62,10 @@ func (m *mySQLScraper) start(_ context.Context, _ component.Host) error {
 	m.sqlclient = sqlclient
 
 	if m.config.QueryMetricsAsLogs {
-		m.cache, err = lru.New[string, int64](100)
-
-		if err != nil {
-			m.logger.Error("Failed to create cache for query metrics", zap.Error(err))
-			return err
-		}
+		m.cache = ttl.New[string, float64](
+			ttl.WithTTL[string, float64](time.Duration(m.config.TopQueryCollection.LookbackTime)*time.Second),
+			ttl.WithCapacity[string, float64](10000))
 	}
-
 	return nil
 }
 
@@ -126,17 +120,6 @@ func (m *mySQLScraper) scrapeMetrics(context.Context) (pmetric.Metrics, error) {
 
 	rb := m.mb.NewResourceBuilder()
 	rb.SetMysqlInstanceEndpoint(m.config.Endpoint)
-	rb.SetMysqlInstanceEndpoint(m.config.Endpoint)
-	ids, err := m.sqlclient.getInstanceIdentifiers()
-	if err != nil {
-		m.logger.Error("Failed to fetch instance info", zap.Error(err))
-		errs.AddPartial(1, err)
-		return m.mb.Emit(), errs.Combine()
-	} else {
-		rb.SetMysqlDbInstance(ids.hostnames)
-		rb.SetMysqlDbSystemVersion(ids.systemVersion)
-		rb.SetMysqlDbMysqlVersion(ids.mySqlVersion)
-	}
 
 	m.mb.EmitForResource(metadata.WithResource(rb.Emit()))
 
@@ -602,14 +585,13 @@ func (m *mySQLScraper) scrapeTableLockWaitEventStats(now pcommon.Timestamp, errs
 	}
 }
 
+/*
+scrapeQueryLogs collects the top query logs and returns them as plog.Logs. Note that this function tracks and accumulates
+the reported wait_times for each query, and only processes the queries that have a wait_time that has increased.
+This means that intermittent queries that take a lot of time will be reported based on their accumulated wait_times.
+Note that individual metric values are tracked and reported similarly to the query logs.
+*/
 func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) plog.Logs {
-	ids, err := m.sqlclient.getInstanceIdentifiers()
-	if err != nil {
-		m.logger.Error("Failed to fetch instance info", zap.Error(err))
-		errs.AddPartial(1, err)
-		return plog.Logs{}
-	}
-
 	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
 	if err != nil {
 		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
@@ -627,9 +609,6 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 	recLogs := logs.ResourceLogs().AppendEmpty()
 	recRes := recLogs.Resource().Attributes()
 	recRes.PutStr("mysql.instance.endpoint", m.config.Endpoint)
-	recRes.PutStr("mysql.db.instance", ids.hostnames)
-	recRes.PutStr("mysql.db.system_version", ids.systemVersion)
-	recRes.PutStr("mysql.db.mysql_version", ids.mySqlVersion)
 
 	scopeLogs := recLogs.ScopeLogs().AppendEmpty()
 	for _, s := range matchedStats {
@@ -640,32 +619,35 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 		atts.PutStr("mysql.db.query.text", s.queryText)
 		atts.PutStr("mysql.db.query.hash", s.queryDigest)
 		if m.config.QueryMetricsAsLogs {
-			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.calls", s.count); isCached && diff > 0 {
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.calls", float64(s.count)); isCached && diff > 0 {
 				atts.PutInt("mysql.db.query.calls", s.count)
 			}
-			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.returned", s.rowsReturned); isCached && diff > 0 {
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.returned", float64(s.rowsReturned)); isCached && diff > 0 {
 				atts.PutInt("mysql.db.query.rows.returned", s.rowsReturned)
 			}
-			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.total", s.rowsExamined); isCached && diff > 0 {
+			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.total", float64(s.rowsExamined)); isCached && diff > 0 {
 				atts.PutInt("mysql.db.query.rows.total", s.rowsExamined)
 			}
 			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.cpu", s.cpuTime); isCached && diff > 0 {
-				// picoseconds to seconds
-				atts.PutDouble("mysql.db.query.time.cpu", float64(s.cpuTime)/1e12)
+				atts.PutDouble("mysql.db.query.time.cpu", s.cpuTime)
 			}
 			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.lock", s.lockTime); isCached && diff > 0 {
-				// picoseconds to seconds
-				atts.PutDouble("mysql.db.query.time.lock", float64(s.lockTime)/1e12)
+				atts.PutDouble("mysql.db.query.time.lock", s.lockTime)
 			}
 			if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.total", s.totalDuration); isCached && diff > 0 {
-				// picoseconds to seconds
-				atts.PutDouble("mysql.db.query.time.total", float64(s.totalDuration)/1e12)
+				atts.PutDouble("mysql.db.query.time.total", s.totalDuration)
 			}
 			// short circuit if no attributes were set
 			if atts.Len() == 0 {
 				continue
 			}
-			atts.PutStr("mysql.db.query.schema", s.schema)
+			if len(s.schema) > 0 {
+				err = atts.PutEmptySlice("mysql.db.query.schemas").FromRaw(s.schema)
+				if err != nil {
+					m.logger.Error("Failed to add schema", zap.Error(err))
+					errs.AddPartial(1, err)
+				}
+			}
 		}
 	}
 	return logs
@@ -674,7 +656,7 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 func (m *mySQLScraper) sortAndReduceTopQueryStats(stats []QueryStats) []QueryStats {
 	matchedStats := []QueryStats{}
 	for _, stat := range stats {
-		if cached, diff := m.cacheAndDiffExecutionTimes(stat.queryDigest, stat.totalWait); cached && diff > 0 {
+		if cached, diff := m.cacheAndDiffExecutionTimes(stat.queryDigest, float64(stat.totalWait)); cached && diff > 0 {
 			matchedStats = append(matchedStats, stat)
 		}
 	}
@@ -691,12 +673,6 @@ func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scraperer
 	if m.config.QueryMetricsAsLogs {
 		return
 	}
-	ids, err := m.sqlclient.getInstanceIdentifiers()
-	if err != nil {
-		m.logger.Error("Failed to fetch instance info", zap.Error(err))
-		errs.AddPartial(1, err)
-		return
-	}
 	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
 	if err != nil {
 		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
@@ -708,72 +684,50 @@ func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scraperer
 		return
 	}
 
-	matchedStats := m.sortAndReduceTopQueryStats(queryStats)
-
 	metricsBuilder := m.mb
-	recBuilder := metricsBuilder.NewResourceBuilder()
-	recBuilder.SetMysqlInstanceEndpoint(m.config.Endpoint)
-	recBuilder.SetMysqlDbInstance(ids.hostnames)
-	recBuilder.SetMysqlDbSystemVersion(ids.systemVersion)
-	recBuilder.SetMysqlDbMysqlVersion(ids.mySqlVersion)
-
-	for _, s := range matchedStats {
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.cpu", s.cpuTime); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryTimeCPUDataPoint(now, float64(s.cpuTime), s.schema)
-		}
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.calls", s.count); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryCallsDataPoint(now, s.count, s.schema)
-		}
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.lock", s.lockTime); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryTimeLockDataPoint(now, float64(s.lockTime), s.schema)
-		}
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.examined", s.rowsExamined); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryRowsTotalDataPoint(now, s.rowsExamined, s.schema)
-		}
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.rows.returned", s.rowsReturned); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryRowsReturnedDataPoint(now, s.rowsReturned, s.schema)
-		}
-		if isCached, diff := m.checkAndDiffMetric(s.queryDigest, "mysql.db.query.time.total", s.totalDuration); isCached && diff > 0 {
-			metricsBuilder.RecordMysqlQueryTimeTotalDataPoint(now, float64(s.totalDuration), s.schema)
-		}
+	for _, s := range queryStats {
+		metricsBuilder.RecordMysqlQueryTimeCPUDataPoint(now, float64(s.cpuTime), s.schema)
+		metricsBuilder.RecordMysqlQueryCallsDataPoint(now, s.count, s.schema)
+		metricsBuilder.RecordMysqlQueryTimeLockDataPoint(now, float64(s.lockTime), s.schema)
+		metricsBuilder.RecordMysqlQueryRowsTotalDataPoint(now, s.rowsExamined, s.schema)
+		metricsBuilder.RecordMysqlQueryRowsReturnedDataPoint(now, s.rowsReturned, s.schema)
+		metricsBuilder.RecordMysqlQueryTimeTotalDataPoint(now, float64(s.totalDuration), s.schema)
 	}
 }
 
-func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest string, picoTime int64) (bool, int) {
+func (m *mySQLScraper) cacheAndDiffExecutionTimes(digest string, recTime float64) (bool, int) {
 	if digest == "" {
 		m.logger.Info("Digest is 0, skipping cache and diff execution times")
 		return false, 0
 	}
-	if picoTime == 0 {
+	if recTime == 0 {
 		m.logger.Info("PicoTime is 0, skipping cache and diff execution times")
 		return false, 0
 	}
 
-	val, ok := m.cache.Get(digest)
+	val, ok := m.cache.GetOrSet(digest, recTime)
 	if !ok {
-		m.cache.Add(digest, picoTime)
 		return false, 0
 	}
-	if picoTime > val {
-		m.cache.Add(digest, picoTime)
-		return true, int(picoTime - val)
+	if recTime > val.Value() {
+		m.cache.Set(digest, recTime, ttl.DefaultTTL)
+		return true, int(recTime - val.Value())
 	}
 	return true, 0
 }
 
-func (m *mySQLScraper) checkAndDiffMetric(digest string, metricName string, picoTime int64) (bool, int64) {
-	if picoTime == 0 {
+func (m *mySQLScraper) checkAndDiffMetric(digest string, metricName string, recTime float64) (bool, float64) {
+	if recTime == 0 {
 		return false, 0
 	}
 	key := fmt.Sprintf("%s:%s", digest, metricName)
-	val, ok := m.cache.Get(key)
+	val, ok := m.cache.GetOrSet(key, recTime)
 	if !ok {
-		m.cache.Add(key, picoTime)
 		return false, 0
 	}
-	if picoTime > val {
-		m.cache.Add(key, picoTime)
-		return true, picoTime - val
+	if recTime > val.Value() {
+		m.cache.Set(key, recTime, ttl.DefaultTTL)
+		return true, recTime - val.Value()
 	}
 	return false, 0
 }

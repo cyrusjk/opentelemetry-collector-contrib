@@ -33,18 +33,12 @@ type Config struct {
 	StatementEvents                StatementEventsConfig         `mapstructure:"statement_events"`
 	QueryMetricsAsLogs             bool                          `mapstructure:"query_metrics_as_logs"`
 	TopQueryCollection             TopQueryCollection            `mapstructure:"top_query_collection"`
-	QuerySample                    QuerySample                   `mapstructure:"query_sample"`
 }
 
 type StatementEventsConfig struct {
 	DigestTextLimit int           `mapstructure:"digest_text_limit"`
 	Limit           int           `mapstructure:"limit"`
 	TimeLimit       time.Duration `mapstructure:"time_limit"`
-}
-
-type QuerySample struct {
-	Enabled         bool   `mapstructure:"enabled"`
-	MaxRowsPerQuery uint64 `mapstructure:"max_rows_per_query"`
 }
 
 type TopQueryCollection struct {
@@ -71,13 +65,5 @@ func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 		cfg.TLS = configtls.ClientConfig{}
 		cfg.TLS.Insecure = true
 	}
-
-	if !componentParser.IsSet("query_metrics_as_logs") {
-		cfg.QueryMetricsAsLogs = true
-	}
-	if !componentParser.IsSet("top_query_count") {
-		cfg.TopQueryCollection.TopQueryCount = 200
-	}
-
 	return componentParser.Unmarshal(cfg)
 }

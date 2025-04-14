@@ -627,7 +627,7 @@ metrics:
   mysql.query.time.lock:
     enabled: true
     description: The total lock time for the query.
-    unit: picoseconds
+    unit: seconds
     sum:
       value_type: double
       monotonic: false
@@ -636,7 +636,7 @@ metrics:
   mysql.query.time.cpu:
     enabled: true
     description: The total CPU time for the query.
-    unit: picoseconds
+    unit: seconds
     sum:
       value_type: double
       monotonic: false
@@ -663,7 +663,7 @@ metrics:
   mysql.query.time.total:
     enabled: true
     description: The total duration of the query.
-    unit: picoseconds
+    unit: seconds
     sum:
       value_type: double
       monotonic: false

@@ -47,6 +47,20 @@ The following settings are optional:
   - `time_limit` - maximum time from since the statements have been observed last time (default=`24h`)
   - `limit` - limit of records, which is maximum number of generated metrics (default=`250`)
 
+- `query_metrics_as_logs` (default = true): Some query metrics are emitted along with the full query text as logs. As described above with statement_events, there is a limit to teh length of attribute values in Metrics, but that limit does not apply to Logs. If this is enabled, the metric values are emitted as Log attribute values. Note that because of this, other Metric datapoint data, such as attributes, will not be communicated.
+  - if false, the same metrics will be reported as regular metrics and the query digest added as an attribute.
+  - metrics that can be emitted as logs are:
+    - mysql.query.time.lock
+    - mysql.query.time.cpu
+    - mysql.query.rows.total
+    - mysql.query.rows.returned
+    - mysql.query.time.total
+    - mysql.query.calls
+- `top_query_collection.enabled`: (default = true): If true, the receiver will collect the top queries by lock_time of the target instance.
+  - `lookback_time` (default= 60): The time window (in seconds) in which to query for top queries.
+    - Queries that were finished execution outside the lookback window are not included in the collection. Increasing the lookback window (in seconds) will be useful for capturing long-running queries.
+  - `max_query_sample_count` (default = 100): The maximum number of queries to consider when determining the top queries to report on
+  - `top_query_count` (default = 200): The maximum number of distinct queries to collect metrics and text for and emit.
 ### Example Configuration
 
 ```yaml
@@ -68,5 +82,5 @@ The full list of settings exposed for this receiver are documented in [config.go
 
 ## Metrics
 
-Details about the metrics produced by this receiver can be found in [metadata.yaml](./metadata.yaml)
+Details about the metrics produced by this receiver can be found in [metadata.yaml](./metadata.yaml). Note that the disabling of most metrics does not work.
 

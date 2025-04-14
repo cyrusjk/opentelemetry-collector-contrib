@@ -7,6 +7,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +30,6 @@ type client interface {
 	getTableLockWaitEventStats() ([]tableLockWaitEventStats, error)
 	getReplicaStatusStats() ([]ReplicaStatusStats, error)
 	getQueryStats(since int64, topCount int) ([]QueryStats, error)
-	getInstanceIdentifiers() (InstanceIdentifiers, error)
 	Close() error
 }
 
@@ -194,27 +195,21 @@ type ReplicaStatusStats struct {
 }
 
 type QueryStats struct {
-	queryText     string
-	queryDigest   string
-	schema        string
-	count         int64
-	wait          int64
-	lockTime      int64
-	cpuTime       int64
-	rowsExamined  int64
-	rowsReturned  int64
-	totalDuration int64
-	totalWait     int64
-	diffTime      int64 // only used during sort, not in scan
-}
-
-type InstanceIdentifiers struct {
-	hostnames     string
-	systemVersion string
-	mySqlVersion  string
+	queryText     string  // The MySQL normalized query text
+	queryDigest   string  // The MySQL query digest against the normalized query text
+	schema        []any   // schemas the query was run against
+	count         int64   // The number of times the query was run since the provided timestamp
+	lockTime      float64 // The total lock time for the query since the provided timestamp
+	cpuTime       float64 // The total CPU time for the query since the provided timestamp
+	rowsExamined  int64   // The total number of rows examined for the query since the provided timestamp
+	rowsReturned  int64   // The total number of rows returned for the query since the provided timestamp
+	totalDuration float64 // The total duration of all calls to this query since the provided timestamp
+	totalWait     int64   // The total wait time for all calls to this query since the database last started
+	diffTime      int64   // only used during sort, not in scan
 }
 
 var _ client = (*mySQLClient)(nil)
+var stringArrayRegex = regexp.MustCompile(`[\s"\[\]]`)
 
 func newMySQLClient(conf *Config) (client, error) {
 	tls, err := conf.TLS.LoadTLSConfig(context.Background())
@@ -267,8 +262,8 @@ func (c *mySQLClient) getVersion() (*version.Version, error) {
 	if err != nil {
 		return nil, err
 	}
-	version, err := version.NewVersion(versionStr)
-	return version, err
+	vrsn, err := version.NewVersion(versionStr)
+	return vrsn, err
 }
 
 // getGlobalStats queries the db for global status metrics.
@@ -700,24 +695,21 @@ func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, er
 	query := "SELECT A.digest_text AS query_text," +
 		"A.digest AS hash," +
 		"count(*) AS execution_count," +
-		"A.current_schema AS schema_nm," +
-		"sum(A.lock_time) AS lock_time," +
+		"JSON_ARRAYAGG(A.current_schema) AS schema_nm, " +
+		"sum(A.lock_time)/1e12 AS lock_time," +
 		"sum(A.rows_examined) AS total_rows," +
-		"sum(A.cpu_time) AS cpu_time," +
-		"sum(A.timer_wait) AS duration," +
+		"sum(A.cpu_time)/1e12 AS cpu_time," +
+		"sum(A.timer_wait)/1e12 AS duration," +
 		"sum(A.rows_sent) AS rows_returned, " +
-		"B.sum_timer_wait AS total_wait, " +
-		"C.PROCESSLIST_ID as pl_id " +
+		"sum(B.sum_timer_wait) AS total_wait " +
 		"FROM performance_schema.events_statements_history AS A, " +
-		"performance_schema.events_statements_summary_by_digest AS B, " +
-		"performance_schema.threads as C " +
+		"performance_schema.events_statements_summary_by_digest AS B " +
 		"WHERE A.event_name = 'statement/sql/select' " +
 		"AND A.timer_start > " + strconv.FormatInt(since, 10) + " " +
 		"AND A.digest = B.digest " +
-		"GROUP BY hash, query_text, schema_nm, total_wait, pl_id " +
+		"GROUP BY hash, query_text " +
 		"ORDER BY duration desc " +
 		"LIMIT " + strconv.FormatInt(int64(topCount), 10) + ";"
-	fmt.Println(query)
 	rows, err := c.client.Query(query)
 	if err != nil {
 		return nil, err
@@ -727,63 +719,44 @@ func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, er
 	var stats []QueryStats
 	for rows.Next() {
 		var s QueryStats
-		var schemaName sql.NullString
-		var plId sql.NullInt64
+		var schemas sql.NullString
 		err := rows.Scan(
 			&s.queryText,
 			&s.queryDigest,
 			&s.count,
-			&schemaName,
+			&schemas,
 			&s.lockTime,
 			&s.rowsExamined,
 			&s.cpuTime,
 			&s.totalDuration,
 			&s.rowsReturned,
 			&s.totalWait,
-			&plId, // processlist id, used in the query but not a metric
 		)
-		if schemaName.Valid {
-			s.schema = schemaName.String
-		} else {
-			s.schema = "NONE"
+		if schemas.Valid {
+			// take out quotes, brackets, and spaces
+			str := stringArrayRegex.ReplaceAllString(schemas.String, "")
+			str = strings.ReplaceAll(str, "null", "")
+			//split on commas
+			strSlice := strings.Split(str, ",")
+			// sort so that Compact works
+			slices.Sort(strSlice)
+			// remove duplicates
+			strSlice = slices.Compact(strSlice)
+			s.schema = make([]any, len(strSlice))
+			for i, v := range strSlice {
+				if v == "" {
+					continue
+				}
+				s.schema[i] = v
+			}
 		}
+
 		if err != nil {
 			return nil, err
 		}
 		stats = append(stats, s)
 	}
 	return stats, nil
-}
-
-func (c *mySQLClient) getInstanceIdentifiers() (InstanceIdentifiers, error) {
-	query := "select ver.sys_version as sys_version, ver.mysql_version as mysql_version, hs.host as host " +
-		"FROM sys.version as ver, sys.host_summary as hs " +
-		"WHERE host NOT IN ('localhost', '127.0.0.1') " +
-		"order by host;"
-	rows, err := c.client.Query(query)
-	if err != nil {
-		return InstanceIdentifiers{}, err
-	}
-	defer rows.Close()
-	ids := InstanceIdentifiers{}
-	for rows.Next() {
-		var host string
-		err := rows.Scan(&ids.systemVersion, &ids.mySqlVersion, &host)
-		if err != nil {
-			return InstanceIdentifiers{}, err
-		}
-		// an instance may have multiple hostnames and/or IPs. If that is the case, concat into csv
-		if len(ids.hostnames) > 0 {
-			ids.hostnames = ids.hostnames + "," + host
-		} else {
-			ids.hostnames = host
-		}
-	}
-	return ids, nil
-}
-
-func picoToSeconds(pico int64) float64 {
-	return float64(pico) / 1e12
 }
 
 func query(c mySQLClient, query string) (map[string]string, error) {

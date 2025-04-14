@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -58,6 +59,13 @@ func TestScrape(t *testing.T) {
 
 		cfg.MetricsBuilderConfig.Metrics.MysqlConnectionCount.Enabled = true
 
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryCalls.Enabled = true
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryRowsReturned.Enabled = true
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryRowsTotal.Enabled = true
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryTimeCPU.Enabled = true
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryTimeLock.Enabled = true
+		cfg.MetricsBuilderConfig.Metrics.MysqlQueryTimeTotal.Enabled = true
+
 		scraper := newMySQLScraper(receivertest.NewNopSettings(metadata.Type), cfg)
 		scraper.sqlclient = &mockClient{
 			globalStatsFile:             "global_stats",
@@ -68,6 +76,7 @@ func TestScrape(t *testing.T) {
 			statementEventsFile:         "statement_events",
 			tableLockWaitEventStatsFile: "table_lock_wait_event_stats",
 			replicaStatusFile:           "replica_stats",
+			queryStatsFile:              "query_stats",
 		}
 
 		scraper.renameCommands = true
@@ -106,6 +115,7 @@ func TestScrape(t *testing.T) {
 			statementEventsFile:         "statement_events_empty",
 			tableLockWaitEventStatsFile: "table_lock_wait_event_stats_empty",
 			replicaStatusFile:           "replica_stats_empty",
+			queryStatsFile:              "query_stats_empty",
 		}
 
 		actualMetrics, scrapeErr := scraper.scrapeMetrics(context.Background())
@@ -146,6 +156,7 @@ func TestScrapeBufferPoolPagesMiscOutOfBounds(t *testing.T) {
 		statementEventsFile:         "statement_events_empty",
 		tableLockWaitEventStatsFile: "table_lock_wait_event_stats_empty",
 		replicaStatusFile:           "replica_stats_empty",
+		queryStatsFile:              "query_stats_empty",
 	}
 
 	scraper.renameCommands = true
@@ -167,6 +178,7 @@ type mockClient struct {
 	statementEventsFile         string
 	tableLockWaitEventStatsFile string
 	replicaStatusFile           string
+	queryStatsFile              string
 }
 
 func readFile(fname string) (map[string]string, error) {
@@ -436,6 +448,34 @@ func (c *mockClient) getReplicaStatusStats() ([]ReplicaStatusStats, error) {
 		s.networkNamespace = text[59]
 
 		stats = append(stats, s)
+	}
+	return stats, nil
+}
+
+func (c *mockClient) getQueryStats(since int64, topCount int) ([]QueryStats, error) {
+	var stats []QueryStats
+	file, err := os.Open(filepath.Join("testdata", "scraper", c.queryStatsFile+".txt"))
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var qs QueryStats
+		text := strings.Split(scanner.Text(), "\t")
+
+		qs.queryText = text[0]
+		qs.queryDigest = text[1]
+		qs.count, _ = strconv.ParseInt(text[2], 10, 64)
+		qs.schema = []any{text[3]}
+		qs.lockTime, _ = strconv.ParseFloat(text[4], 64)
+		qs.rowsExamined, _ = strconv.ParseInt(text[5], 10, 64)
+		qs.cpuTime, _ = strconv.ParseFloat(text[6], 64)
+		qs.totalDuration, _ = strconv.ParseFloat(text[7], 64)
+		qs.rowsReturned, _ = strconv.ParseInt(text[8], 10, 64)
+		qs.totalWait, _ = strconv.ParseInt(text[9], 10, 64)
+		stats = append(stats, qs)
 	}
 	return stats, nil
 }
