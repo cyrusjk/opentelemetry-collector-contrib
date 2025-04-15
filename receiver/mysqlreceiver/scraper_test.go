@@ -468,7 +468,7 @@ func (c *mockClient) getQueryStats(since int64, topCount int) ([]QueryStats, err
 		qs.queryText = text[0]
 		qs.queryDigest = text[1]
 		qs.count, _ = strconv.ParseInt(text[2], 10, 64)
-		qs.schema = []any{text[3]}
+		qs.schema = text[3]
 		qs.lockTime, _ = strconv.ParseFloat(text[4], 64)
 		qs.rowsExamined, _ = strconv.ParseInt(text[5], 10, 64)
 		qs.cpuTime, _ = strconv.ParseFloat(text[6], 64)

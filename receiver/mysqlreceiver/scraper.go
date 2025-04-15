@@ -117,6 +117,8 @@ func (m *mySQLScraper) scrapeMetrics(context.Context) (pmetric.Metrics, error) {
 
 	// collect replicas status metrics.
 	m.scrapeReplicaStatusStats(now)
+	// collect detailed query metrics
+	m.scrapeQueryMetrics(now, errs)
 
 	rb := m.mb.NewResourceBuilder()
 	rb.SetMysqlInstanceEndpoint(m.config.Endpoint)
@@ -641,13 +643,7 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 			if atts.Len() == 0 {
 				continue
 			}
-			if len(s.schema) > 0 {
-				err = atts.PutEmptySlice("mysql.db.query.schemas").FromRaw(s.schema)
-				if err != nil {
-					m.logger.Error("Failed to add schema", zap.Error(err))
-					errs.AddPartial(1, err)
-				}
-			}
+			atts.PutStr("mysql.db.query.schemas", s.schema)
 		}
 	}
 	return logs

@@ -258,7 +258,7 @@ The total number of times the query was executed.
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.query.rows.returned
 
@@ -272,7 +272,7 @@ The total number of rows returned by the query.
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.query.rows.total
 
@@ -286,7 +286,7 @@ The total number of rows examined by the query.
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.query.time.cpu
 
@@ -294,13 +294,13 @@ The total CPU time for the query.
 
 | Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
 | ---- | ----------- | ---------- | ----------------------- | --------- |
-| picoseconds | Sum | Double | Cumulative | false |
+| seconds | Sum | Double | Cumulative | false |
 
 #### Attributes
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.query.time.lock
 
@@ -308,13 +308,13 @@ The total lock time for the query.
 
 | Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
 | ---- | ----------- | ---------- | ----------------------- | --------- |
-| picoseconds | Sum | Double | Cumulative | false |
+| seconds | Sum | Double | Cumulative | false |
 
 #### Attributes
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.query.time.total
 
@@ -322,13 +322,13 @@ The total duration of the query.
 
 | Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic |
 | ---- | ----------- | ---------- | ----------------------- | --------- |
-| picoseconds | Sum | Double | Cumulative | false |
+| seconds | Sum | Double | Cumulative | false |
 
 #### Attributes
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| schemas | The schemas of the object, if plural, may be empty. | Any Slice |
+| schema | The schema of the object. | Any Str |
 
 ### mysql.row_locks
 

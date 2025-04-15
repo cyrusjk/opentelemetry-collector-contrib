@@ -197,7 +197,7 @@ type ReplicaStatusStats struct {
 type QueryStats struct {
 	queryText     string  // The MySQL normalized query text
 	queryDigest   string  // The MySQL query digest against the normalized query text
-	schema        []any   // schemas the query was run against
+	schema        string  // schemas the query was run against
 	count         int64   // The number of times the query was run since the provided timestamp
 	lockTime      float64 // The total lock time for the query since the provided timestamp
 	cpuTime       float64 // The total CPU time for the query since the provided timestamp
@@ -742,12 +742,11 @@ func (c *mySQLClient) getQueryStats(since int64, topCount int) ([]QueryStats, er
 			slices.Sort(strSlice)
 			// remove duplicates
 			strSlice = slices.Compact(strSlice)
-			s.schema = make([]any, len(strSlice))
-			for i, v := range strSlice {
-				if v == "" {
-					continue
-				}
-				s.schema[i] = v
+
+			if len(strSlice) == 1 && strSlice[0] == "" {
+				s.schema = "NONE"
+			} else {
+				s.schema = strings.Join(strSlice, ",")
 			}
 		}
 
