@@ -5,7 +5,6 @@ go 1.23.0
 require (
 	github.com/go-sql-driver/mysql v1.9.2
 	github.com/google/go-cmp v0.7.0
-	github.com/jellydator/ttlcache/v3 v3.3.0
 	github.com/open-telemetry/opentelemetry-collector-contrib/internal/coreinternal v0.124.1
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/golden v0.124.1
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/pdatatest v0.124.1
@@ -45,7 +44,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.19.0 // indirect
 	go.opentelemetry.io/otel/log v0.11.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
-	golang.org/x/sync v0.13.0 // indirect
 )
 
 require (

@@ -65,5 +65,14 @@ func (cfg *Config) Unmarshal(componentParser *confmap.Conf) error {
 		cfg.TLS = configtls.ClientConfig{}
 		cfg.TLS.Insecure = true
 	}
+
+	if !componentParser.IsSet("top_query_collection") {
+		cfg.TopQueryCollection = TopQueryCollection{}
+		cfg.TopQueryCollection.Enabled = false
+	}
+
+	if !componentParser.IsSet("query_metrics_as_logs") {
+		cfg.QueryMetricsAsLogs = false
+	}
 	return componentParser.Unmarshal(cfg)
 }

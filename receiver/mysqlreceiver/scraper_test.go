@@ -480,6 +480,10 @@ func (c *mockClient) getQueryStats(since int64, topCount int) ([]QueryStats, err
 	return stats, nil
 }
 
+func (c *mockClient) getExplainPlanAsJsonForDigestQuery(query string) (string, error) {
+	return "query plan", nil
+}
+
 func (c *mockClient) Close() error {
 	return nil
 }
