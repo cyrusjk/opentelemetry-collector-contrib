@@ -45,24 +45,6 @@ func (s scopeKeySlice) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-func (s scopeKey) Equal(ss scopeKey) bool {
-	if len(s.Attributes) != len(ss.Attributes) {
-		return false
-	}
-	for k, v := range s.Attributes {
-		if v != ss.Attributes[k] {
-			return false
-		}
-	}
-	if s.TypeName != ss.TypeName {
-		return false
-	}
-	if s.UnitName != ss.UnitName {
-		return false
-	}
-	return true
-}
-
 const (
 // LogsStability    = component.StabilityLevelDevelopment
 // MetricsStability = component.StabilityLevelBeta
@@ -138,77 +120,26 @@ func (ms *MappingStrategy) copyToLogAttributes(metrics pmetric.ScopeMetricsSlice
 }
 
 /*
-	This is a more complex mapping strategy that attempts to group metrics with the same Metric attributes under the same
-
-Scope, with that Scope's Attributes holding the relevant Metric attributes. This is useful for grouping metrics that
-are related to the same entity, such as a host or a process.
+		This strategy simply serializes the metrics as JSON to the log body. This is more in compliance with the OpenTelemetry
+	    Event format. It is useful for debugging and testing, but it may not be suitable for production use cases.
 */
-func (ms *MappingStrategy) AttributesToScopeMappingStrategy(metrics pmetric.Metrics) (plog.Logs, error) {
+func (ms *MappingStrategy) MetricsToLogBody(metrics pmetric.Metrics) (plog.Logs, error) {
+	marshaler := &pmetric.JSONMarshaler{}
 	logs := plog.NewLogs()
-	for a := 0; a < metrics.ResourceMetrics().Len(); a++ {
-		resMets := metrics.ResourceMetrics().At(a)
-
-		recLogs := logs.ResourceLogs().AppendEmpty()
-		// copy the resource
-		metrics.ResourceMetrics().At(a).Resource().CopyTo(recLogs.Resource())
-		recLogs.Resource().Attributes().PutStr("EventSource", "metrics")
-		recLogs.Resource().Attributes().PutStr("GUID", ulid.Make().String())
-		// Spin through the datapoints to figure out the scopes we need to create
-
-		scopeLogs := recLogs.ScopeLogs().AppendEmpty()
-
-		scope := scopeLogs.Scope()
-		if resMets.ScopeMetrics().Len() == 1 {
-			scopeMets := resMets.ScopeMetrics().At(0)
-			scope.SetName(scopeMets.Scope().Name())
-			scope.SetVersion(scopeMets.Scope().Version())
-		} else {
-			scope.SetName("github.com/open-telemetry/opentelemetry-collector-contrib/connector/metricstoeventsconnector")
-			scope.SetVersion("development")
-			scope.SetName("metricstoeventsconnector")
-			scope.SetVersion("0.0.1")
-		}
-		//conn.mapToLogAttributes(resMets.ScopeMetrics(), scopeLogs.LogRecords())
-		logRecordSlice := scopeLogs.LogRecords()
-		ms.copyToLogAttributes(resMets.ScopeMetrics(), &logRecordSlice)
+	reclogs := logs.ResourceLogs()
+	recLogs := reclogs.AppendEmpty()
+	// copy the resource
+	metrics.ResourceMetrics().At(0).Resource().CopyTo(recLogs.Resource())
+	recLogs.Resource().Attributes().PutStr("EventSource", "metrics")
+	recLogs.Resource().Attributes().PutStr("GUID", ulid.Make().String()) // kafka exporter uses resource attributes as key, so give it something to break that up
+	scopeLogs := recLogs.ScopeLogs().AppendEmpty()
+	logRec := scopeLogs.LogRecords().AppendEmpty()
+	jsonMetrics, err := marshaler.MarshalMetrics(metrics)
+	if err != nil {
+		ms.logger.Error(fmt.Sprintf("Error marshaling metrics to JSON: %s", err.Error()))
+		return logs, err
 	}
+	logRec.Body().SetStr(string(jsonMetrics))
+
 	return logs, nil
-}
-
-func deriveScopeKeys(metrics *pmetric.Metrics) []scopeKey {
-	scopeKeys := make(map[scopeKey][]float64, 0)
-	for a := 0; a < metrics.ResourceMetrics().Len(); a++ {
-		resMets := metrics.ResourceMetrics().At(a)
-		for b := 0; b < resMets.ScopeMetrics().Len(); b++ {
-			scopeMets := resMets.ScopeMetrics().At(b)
-			for c := 0; c < scopeMets.Metrics().Len(); c++ {
-				metric := scopeMets.Metrics().At(c)
-			}
-		}
-	}
-	return scopeKeys
-}
-
-func mapAllAttributesForMetric(metric pmetric.Metric) []scopeKey {
-	attributes := make([]scopeKey, 0)
-	var datapoints pmetric.NumberDataPointSlice
-	switch metric.Type() {
-	case pmetric.MetricTypeGauge:
-		datapoints = metric.Gauge().DataPoints()
-	case pmetric.MetricTypeSum:
-		datapoints = metric.Sum().DataPoints()
-	default:
-		datapoints = pmetric.NumberDataPointSlice{}
-	}
-
-	for i := 0; i < datapoints.Len(); i++ {
-		dp := datapoints.At(i)
-		scopeKey := scopeKey{
-			Attributes: dp.Attributes().AsRaw(),
-			TypeName:   metric.Type().String(),
-			UnitName:   metric.Unit(),
-		}
-		attributes = append(attributes, scopeKey)
-	}
-	return attributes
 }
