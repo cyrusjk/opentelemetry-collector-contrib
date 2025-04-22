@@ -6,6 +6,7 @@ status:
     unmaintained: [metrics, logs]
   distributions: [contrib]
   codeowners:
+    active: [antonblock]
     seeking_new: true
     emeritus: [djaglowski]
 
