@@ -33,6 +33,7 @@ type mySQLScraper struct {
 	renameCommands bool
 
 	lastQueryMetricsGatheringTime int64
+	gatheringExplainPlans         bool
 }
 
 func newMySQLScraper(
@@ -593,7 +594,7 @@ Note that individual metric values are tracked and reported similarly to the que
 */
 func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) plog.Logs {
 	m.logger.Debug("scrapeQueryLogs called")
-	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryMetricsMax))
+	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, m.config.TopQueryMetricsMax)
 	if err != nil {
 		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
 		errs.AddPartial(1, err)
@@ -614,6 +615,11 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 		m.logger.Debug("No query logs stats found after sorting and reducing")
 		return logs
 	}
+	// Gathering of explain plans is done via goroutines, so we need to track if we are already in the process of gathering
+	if m.gatheringExplainPlans {
+		m.logger.Warn("Query plan gathering is already in progress from a previous run")
+	}
+	m.gatheringExplainPlans = true
 	wg := sync.WaitGroup{}
 	for _, s := range matchedStats {
 		log := scopeLogs.LogRecords().AppendEmpty()
@@ -661,11 +667,11 @@ func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror
 			}
 		}
 	}
-
+	wg.Wait()
+	m.gatheringExplainPlans = false
 	scopeLogs.LogRecords().RemoveIf(func(lr plog.LogRecord) bool {
 		return lr.Attributes().Len() == 0
 	})
-	wg.Wait()
 	return logs
 }
 
