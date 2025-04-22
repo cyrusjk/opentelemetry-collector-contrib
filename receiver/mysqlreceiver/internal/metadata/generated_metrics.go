@@ -3925,24 +3925,6 @@ func NewMetricsBuilder(mbc MetricsBuilderConfig, settings receiver.Settings, opt
 		resourceAttributeIncludeFilter:     make(map[string]filter.Filter),
 		resourceAttributeExcludeFilter:     make(map[string]filter.Filter),
 	}
-	if mbc.ResourceAttributes.MysqlDbInstance.MetricsInclude != nil {
-		mb.resourceAttributeIncludeFilter["mysql.db.instance"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbInstance.MetricsInclude)
-	}
-	if mbc.ResourceAttributes.MysqlDbInstance.MetricsExclude != nil {
-		mb.resourceAttributeExcludeFilter["mysql.db.instance"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbInstance.MetricsExclude)
-	}
-	if mbc.ResourceAttributes.MysqlDbMysqlVersion.MetricsInclude != nil {
-		mb.resourceAttributeIncludeFilter["mysql.db.mysql_version"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbMysqlVersion.MetricsInclude)
-	}
-	if mbc.ResourceAttributes.MysqlDbMysqlVersion.MetricsExclude != nil {
-		mb.resourceAttributeExcludeFilter["mysql.db.mysql_version"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbMysqlVersion.MetricsExclude)
-	}
-	if mbc.ResourceAttributes.MysqlDbSystemVersion.MetricsInclude != nil {
-		mb.resourceAttributeIncludeFilter["mysql.db.system_version"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbSystemVersion.MetricsInclude)
-	}
-	if mbc.ResourceAttributes.MysqlDbSystemVersion.MetricsExclude != nil {
-		mb.resourceAttributeExcludeFilter["mysql.db.system_version"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlDbSystemVersion.MetricsExclude)
-	}
 	if mbc.ResourceAttributes.MysqlInstanceEndpoint.MetricsInclude != nil {
 		mb.resourceAttributeIncludeFilter["mysql.instance.endpoint"] = filter.CreateFilter(mbc.ResourceAttributes.MysqlInstanceEndpoint.MetricsInclude)
 	}

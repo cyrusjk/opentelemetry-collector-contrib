@@ -56,11 +56,7 @@ The following settings are optional:
     - mysql.query.rows.returned
     - mysql.query.time.total
     - mysql.query.calls
-- `top_query_collection.enabled`: (default = true): If true, the receiver will collect the top queries by lock_time of the target instance.
-  - `lookback_time` (default= 60): The time window (in seconds) in which to query for top queries.
-    - Queries that were finished execution outside the lookback window are not included in the collection. Increasing the lookback window (in seconds) will be useful for capturing long-running queries.
-  - `max_query_sample_count` (default = 100): The maximum number of queries to consider when determining the top queries to report on
-  - `top_query_count` (default = 200): The maximum number of distinct queries to collect metrics and text for and emit.
+- `top_query_metrics_max: (default = 200): The maximum number of top queries to be collected. The receiver will collect the top queries based on the `mysql.statement_events.count` metric. The value must be a positive integer. If set to 0, no top queries will be collected.
 ### Example Configuration
 
 ```yaml

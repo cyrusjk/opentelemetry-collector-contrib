@@ -15,18 +15,6 @@ resource_attributes:
     description: Endpoint of the MySQL instance.
     enabled: true
     type: string
-  mysql.db.instance:
-    description: The name of the database instance.
-    enabled: true
-    type: string
-  mysql.db.system_version:
-    description: The system version of the database.
-    enabled: true
-    type: string
-  mysql.db.mysql_version:
-    description: The MySQL version of the database.
-    enabled: true
-    type: string
 attributes:
   buffer_pool_pages:
     name_override: kind

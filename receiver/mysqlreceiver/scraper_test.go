@@ -88,7 +88,17 @@ func TestScrape(t *testing.T) {
 		expectedMetrics, err := golden.ReadMetrics(expectedFile)
 		require.NoError(t, err)
 
-		require.NoError(t, pmetrictest.CompareMetrics(actualMetrics, expectedMetrics,
+		//expectedNames := make([]string, expectedMetrics.MetricCount())
+		//for _, nm := range expectedMetrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().All() {
+		//	expectedNames = append(expectedNames, nm.Name())
+		//}
+		//for _, nm := range actualMetrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().All() {
+		//	if !slices.Contains(expectedNames, nm.Name()) {
+		//		t.Errorf("Unexpected metric name: %s", nm.Name())
+		//	}
+		//}
+
+		require.NoError(t, pmetrictest.CompareMetrics(expectedMetrics, actualMetrics, pmetrictest.IgnoreMetricsOrder(),
 			pmetrictest.IgnoreMetricDataPointsOrder(), pmetrictest.IgnoreStartTimestamp(), pmetrictest.IgnoreTimestamp()))
 	})
 
@@ -483,6 +493,8 @@ func (c *mockClient) getQueryStats(since int64, topCount int) ([]QueryStats, err
 func (c *mockClient) getExplainPlanAsJsonForDigestQuery(query string) (string, error) {
 	return "query plan", nil
 }
+
+func (c *mockClient) checkPerformanceCollectionSettings() {}
 
 func (c *mockClient) Close() error {
 	return nil

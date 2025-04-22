@@ -35,10 +35,7 @@ func TestLoadConfig(t *testing.T) {
 	// This defaults to true when tls is omitted from the configmap.
 	expected.TLS.Insecure = true
 	expected.QueryMetricsAsLogs = false
-	expected.TopQueryCollection.Enabled = false
-	expected.TopQueryCollection.TopQueryCount = 0
-	expected.TopQueryCollection.MaxQuerySampleCount = 0
-	expected.TopQueryCollection.LookbackTime = 0
+	expected.TopQueryMetricsMax = 9
 
 	require.Equal(t, expected, cfg)
 }
@@ -64,10 +61,7 @@ func TestLoadConfigDefaultTLS(t *testing.T) {
 	expected.TLS.Insecure = false
 	expected.TLS.ServerName = "localhost"
 	expected.QueryMetricsAsLogs = false
-	expected.TopQueryCollection.Enabled = false
-	expected.TopQueryCollection.TopQueryCount = 0
-	expected.TopQueryCollection.MaxQuerySampleCount = 0
-	expected.TopQueryCollection.LookbackTime = 0
+	expected.TopQueryMetricsMax = 200
 
 	require.Equal(t, expected, cfg)
 }

@@ -79,9 +79,6 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					MysqlUptime:                  MetricConfig{Enabled: true},
 				},
 				ResourceAttributes: ResourceAttributesConfig{
-					MysqlDbInstance:       ResourceAttributeConfig{Enabled: true},
-					MysqlDbMysqlVersion:   ResourceAttributeConfig{Enabled: true},
-					MysqlDbSystemVersion:  ResourceAttributeConfig{Enabled: true},
 					MysqlInstanceEndpoint: ResourceAttributeConfig{Enabled: true},
 				},
 			},
@@ -144,9 +141,6 @@ func TestMetricsBuilderConfig(t *testing.T) {
 					MysqlUptime:                  MetricConfig{Enabled: false},
 				},
 				ResourceAttributes: ResourceAttributesConfig{
-					MysqlDbInstance:       ResourceAttributeConfig{Enabled: false},
-					MysqlDbMysqlVersion:   ResourceAttributeConfig{Enabled: false},
-					MysqlDbSystemVersion:  ResourceAttributeConfig{Enabled: false},
 					MysqlInstanceEndpoint: ResourceAttributeConfig{Enabled: false},
 				},
 			},
@@ -183,18 +177,12 @@ func TestResourceAttributesConfig(t *testing.T) {
 		{
 			name: "all_set",
 			want: ResourceAttributesConfig{
-				MysqlDbInstance:       ResourceAttributeConfig{Enabled: true},
-				MysqlDbMysqlVersion:   ResourceAttributeConfig{Enabled: true},
-				MysqlDbSystemVersion:  ResourceAttributeConfig{Enabled: true},
 				MysqlInstanceEndpoint: ResourceAttributeConfig{Enabled: true},
 			},
 		},
 		{
 			name: "none_set",
 			want: ResourceAttributesConfig{
-				MysqlDbInstance:       ResourceAttributeConfig{Enabled: false},
-				MysqlDbMysqlVersion:   ResourceAttributeConfig{Enabled: false},
-				MysqlDbSystemVersion:  ResourceAttributeConfig{Enabled: false},
 				MysqlInstanceEndpoint: ResourceAttributeConfig{Enabled: false},
 			},
 		},

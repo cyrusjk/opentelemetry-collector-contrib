@@ -60,6 +60,7 @@ func (m *mySQLScraper) start(_ context.Context, _ component.Host) error {
 		return err
 	}
 	m.sqlclient = sqlclient
+	sqlclient.checkPerformanceCollectionSettings()
 
 	return nil
 }
@@ -592,7 +593,7 @@ Note that individual metric values are tracked and reported similarly to the que
 */
 func (m *mySQLScraper) scrapeQueryLogs(now pcommon.Timestamp, errs *scrapererror.ScrapeErrors) plog.Logs {
 	m.logger.Debug("scrapeQueryLogs called")
-	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
+	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryMetricsMax))
 	if err != nil {
 		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
 		errs.AddPartial(1, err)
@@ -706,8 +707,8 @@ func (m *mySQLScraper) sortAndReduceTopQueryStats(stats []QueryStats) []QuerySta
 	if len(matchedStats) == 0 {
 		return matchedStats
 	}
-	if len(matchedStats) > int(m.config.TopQueryCollection.TopQueryCount) {
-		matchedStats = matchedStats[:m.config.TopQueryCollection.TopQueryCount]
+	if len(matchedStats) > int(m.config.TopQueryMetricsMax) {
+		matchedStats = matchedStats[:m.config.TopQueryMetricsMax]
 	}
 	return matchedStats
 }
@@ -716,7 +717,7 @@ func (m *mySQLScraper) scrapeQueryMetrics(now pcommon.Timestamp, errs *scraperer
 	if m.config.QueryMetricsAsLogs {
 		return
 	}
-	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryCollection.TopQueryCount))
+	queryStats, err := m.sqlclient.getQueryStats(m.lastQueryMetricsGatheringTime, int(m.config.TopQueryMetricsMax))
 	if err != nil {
 		m.logger.Error("Failed to fetch query logs stats", zap.Error(err))
 		errs.AddPartial(1, err)

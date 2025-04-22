@@ -731,7 +731,4 @@ The number of hits, misses or overflows for open tables cache lookups.
 
 | Name | Description | Values | Enabled |
 | ---- | ----------- | ------ | ------- |
-| mysql.db.instance | The name of the database instance. | Any Str | true |
-| mysql.db.mysql_version | The MySQL version of the database. | Any Str | true |
-| mysql.db.system_version | The system version of the database. | Any Str | true |
 | mysql.instance.endpoint | Endpoint of the MySQL instance. | Any Str | true |

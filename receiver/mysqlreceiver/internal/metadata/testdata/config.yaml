@@ -106,12 +106,6 @@ all_set:
     mysql.uptime:
       enabled: true
   resource_attributes:
-    mysql.db.instance:
-      enabled: true
-    mysql.db.mysql_version:
-      enabled: true
-    mysql.db.system_version:
-      enabled: true
     mysql.instance.endpoint:
       enabled: true
 none_set:
@@ -221,46 +215,16 @@ none_set:
     mysql.uptime:
       enabled: false
   resource_attributes:
-    mysql.db.instance:
-      enabled: false
-    mysql.db.mysql_version:
-      enabled: false
-    mysql.db.system_version:
-      enabled: false
     mysql.instance.endpoint:
       enabled: false
 filter_set_include:
   resource_attributes:
-    mysql.db.instance:
-      enabled: true
-      metrics_include:
-        - regexp: ".*"
-    mysql.db.mysql_version:
-      enabled: true
-      metrics_include:
-        - regexp: ".*"
-    mysql.db.system_version:
-      enabled: true
-      metrics_include:
-        - regexp: ".*"
     mysql.instance.endpoint:
       enabled: true
       metrics_include:
         - regexp: ".*"
 filter_set_exclude:
   resource_attributes:
-    mysql.db.instance:
-      enabled: true
-      metrics_exclude:
-        - strict: "mysql.db.instance-val"
-    mysql.db.mysql_version:
-      enabled: true
-      metrics_exclude:
-        - strict: "mysql.db.mysql_version-val"
-    mysql.db.system_version:
-      enabled: true
-      metrics_exclude:
-        - strict: "mysql.db.system_version-val"
     mysql.instance.endpoint:
       enabled: true
       metrics_exclude:

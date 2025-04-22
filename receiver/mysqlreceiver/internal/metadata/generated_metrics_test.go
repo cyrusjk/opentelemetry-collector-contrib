@@ -256,9 +256,6 @@ func TestMetricsBuilder(t *testing.T) {
 			mb.RecordMysqlUptimeDataPoint(ts, "1")
 
 			rb := mb.NewResourceBuilder()
-			rb.SetMysqlDbInstance("mysql.db.instance-val")
-			rb.SetMysqlDbMysqlVersion("mysql.db.mysql_version-val")
-			rb.SetMysqlDbSystemVersion("mysql.db.system_version-val")
 			rb.SetMysqlInstanceEndpoint("mysql.instance.endpoint-val")
 			res := rb.Emit()
 			metrics := mb.Emit(WithResource(res))

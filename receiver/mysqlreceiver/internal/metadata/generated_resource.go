@@ -21,27 +21,6 @@ func NewResourceBuilder(rac ResourceAttributesConfig) *ResourceBuilder {
 	}
 }
 
-// SetMysqlDbInstance sets provided value as "mysql.db.instance" attribute.
-func (rb *ResourceBuilder) SetMysqlDbInstance(val string) {
-	if rb.config.MysqlDbInstance.Enabled {
-		rb.res.Attributes().PutStr("mysql.db.instance", val)
-	}
-}
-
-// SetMysqlDbMysqlVersion sets provided value as "mysql.db.mysql_version" attribute.
-func (rb *ResourceBuilder) SetMysqlDbMysqlVersion(val string) {
-	if rb.config.MysqlDbMysqlVersion.Enabled {
-		rb.res.Attributes().PutStr("mysql.db.mysql_version", val)
-	}
-}
-
-// SetMysqlDbSystemVersion sets provided value as "mysql.db.system_version" attribute.
-func (rb *ResourceBuilder) SetMysqlDbSystemVersion(val string) {
-	if rb.config.MysqlDbSystemVersion.Enabled {
-		rb.res.Attributes().PutStr("mysql.db.system_version", val)
-	}
-}
-
 // SetMysqlInstanceEndpoint sets provided value as "mysql.instance.endpoint" attribute.
 func (rb *ResourceBuilder) SetMysqlInstanceEndpoint(val string) {
 	if rb.config.MysqlInstanceEndpoint.Enabled {

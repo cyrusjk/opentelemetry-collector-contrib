@@ -21,6 +21,7 @@ import (
 
 type client interface {
 	Connect() error
+	checkPerformanceCollectionSettings()
 	getVersion() (*version.Version, error)
 	getGlobalStats() (map[string]string, error)
 	getInnodbStats() (map[string]string, error)
@@ -812,7 +813,8 @@ func (c *mySQLClient) getExplainPlanAsJsonForDigestQuery(query string) (string, 
 	rows, err := c.client.Query(explainQuery)
 	if err != nil {
 		// errors are typically gathered and handled by the caller, but in this case we want to be sure we see the updated
-		// query that caused the error in the logs
+		// query that caused the error in the logs.
+		// NOTE
 		c.logger.Warn("MySQL EXPLAIN returned an error for query", zap.String("query", query), zap.Error(err))
 		return "", err
 	}
@@ -831,6 +833,45 @@ func (c *mySQLClient) getExplainPlanAsJsonForDigestQuery(query string) (string, 
 	}
 	return explainPlan, nil
 }
+
+func (c *mySQLClient) checkPerformanceCollectionSettings() {
+	// Check if the performance_schema is enabled
+	var performanceSchemaEnabled string
+	err := c.client.QueryRow("SELECT @@performance_schema").Scan(&performanceSchemaEnabled)
+	if err != nil {
+		c.logger.Error("Error checking performance_schema", zap.Error(err))
+		return
+	}
+
+	if performanceSchemaEnabled == "0" {
+		c.logger.Warn("Performance schema is not enabled. Some metrics may not be available.")
+	}
+
+	var setupConsumers struct {
+		name    string
+		enabled string
+	}
+
+	rows, err := c.client.Query("SELECT name, enabled FROM performance_schema.setup_consumers")
+	if err != nil {
+		c.logger.Error("Error checking setup_consumers", zap.Error(err))
+		return
+	}
+	for rows.Next() {
+		err := rows.Scan(&setupConsumers.name, &setupConsumers.enabled)
+		if err != nil {
+			c.logger.Error("Error checking setup_consumers", zap.Error(err))
+			return
+		}
+		switch setupConsumers.name {
+		case "events_statements_current", "events_statements_history", "events_statements_history_long":
+			if setupConsumers.enabled != "YES" {
+				c.logger.Warn(fmt.Sprintf("Performance schema consumer %s is not enabled. Some metrics may not be available.", setupConsumers.name))
+			}
+		}
+	}
+}
+
 func stringifyJsonStringArray(input sql.NullString) string {
 	if !input.Valid {
 		return ""
