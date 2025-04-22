@@ -26,6 +26,10 @@ Collecting most metrics requires the ability to execute `SHOW GLOBAL STATUS`.
 
 ## Configuration
 
+The target MySQL server should have the appropriate configuration settings:
+- `performance_schema` should be enabled.
+- `performance_schema.events_statements_current` and `performance_schema.events_statements_current` should be enabled in the `performance_schema.setup_consumers` table.
+- the variable `performance_schema_max_sql_text_length` defaults to 1024, and will need to be increased if you want to collect the full SQL text of queries and any corresponding explain plans. This is a global variable, so it will affect all users. see [this link](https://dev.mysql.com/doc/refman/9.0/en/performance-schema-system-variables.html#sysvar_performance_schema_max_sql_text_length) for more information.
 
 The following settings are optional:
 - `endpoint`: (default = `localhost:3306`)
